@@ -44,17 +44,18 @@ class config_mgr:
         # cfg = configobj.ConfigObj("" + config_mgr.CONFIG_FILE_LOCATION, unrepr=True)
         cfg['use_https'] = False
         cfg['drrr_domain'] = 'drrr.com'
+        cfg['http_failure_retries'] = 5
         cfg['connections'] = {}
         cfg['connections']['default'] = {}
-        cfg['connections']['default']["username_incl_tripcode"] = "Laksa#866&!xd$"
-        cfg['connections']['default']["avatar"] = "zaika"
+        cfg['connections']['default']["username_incl_tripcode"] = "sample#tr1pc0de"
+        cfg['connections']['default']["avatar"] = "kanra"
         cfg['cookies_dir'] = 'cookies'
         cfg['plugin_spec'] = {}
         cfg['permissions'] = {}
 
         # make sure to get your tripcode right
         # gods are people who have physical access to the bot
-        cfg['permissions']['gods'] = [('Laksa', 'LNAgisAf26'), ('nagisa', 'AYnagISAfA')]
+        cfg['permissions']['gods'] = [('sample', 'pnNad3aArk')]
         # admins are people who can grant/remove other permissions from others except gods
         cfg['permissions']['admins'] = []
 
@@ -63,4 +64,3 @@ class config_mgr:
 if __name__ == '__main__':
     config_mgr.sample_cfg_file()
     c = config_mgr()
-    print(c.cfg)
