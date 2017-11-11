@@ -93,14 +93,14 @@ class bot:
         for _, v in self.conn.items():
             v.close()
 
-    def _get_rooms(self, event, queue, stat, resp):
-        if stat == 200:
-            resp_parsed = json.loads(resp)
-            # should be a list
-            queue.put(resp_parsed['rooms'])
-        else:
-            queue.put([])
-        event.set()
+    # def _get_rooms(self, event, queue, stat, resp):
+    #     if stat == 200:
+    #         resp_parsed = json.loads(resp)
+    #         # should be a list
+    #         queue.put(resp_parsed['rooms'])
+    #     else:
+    #         queue.put([])
+    #     event.set()
 
     def leave(self, conn_name):
         if self.conn[conn_name].room is not None:
@@ -117,46 +117,53 @@ class bot:
 
     # let's just make this blocking
     # queue is inherently thread safe so let's use that
+    # def get_rooms(self, conn_name):
+    #     event = threading.Event()
+    #     q = queue.Queue()
+    #     cb_with_event = functools.partial(self._get_rooms, event, q)
+    #
+    #     self.conn[conn_name].get_lounge(lambda stat, resp:
+    #                                         cb_with_event(stat, resp))
+    #     event.wait()
+    #     return q.get()
+
     def get_rooms(self, conn_name):
-        event = threading.Event()
-        q = queue.Queue()
-        cb_with_event = functools.partial(self._get_rooms, event, q)
-
-        self.conn[conn_name].get_lounge(lambda stat, resp:
-                                            cb_with_event(stat, resp))
-        event.wait()
-        return q.get()
-
-    # logged in and received the drrr-session-1 cookie
-    def _handle_login_lounge(self, conn_name, stat, resp, cookie_jar):
-        self.logger.debug('status: %d, resp: %s' % (stat, resp))
+        stat, resp = self.conn[conn_name].get_lounge_blocking()
         if stat == 200:
             resp_parsed = json.loads(resp)
-            if resp_parsed['message'] == 'ok':
-                cookie_path = os.path.join(os.path.abspath(self.config_mgr.cookies_dir())
-                                           , self.conn[conn_name].id+".cookie")
-                self.logger.debug(cookie_path)
-                cookie_jar.save(cookie_path)
-                self.logger.debug("successfully logged in and cached cookies!")
-            else:
-                self.logger.warning("not ok???")
+            # should be a list
+            return resp_parsed['rooms']
         else:
-            self.logger.warning("unable to perform login")
+            return []
 
-    def _handle_login_token(self, conn_name, stat, resp):
+    def login(self, conn_name):
+        stat, resp = self.conn[conn_name].get_login_token()
         self.logger.debug('status: %d, resp: %s' % (stat, resp))
+
         if stat == 200:
             resp_parsed = json.loads(resp)
             token = resp_parsed['token']
-            self.logger.debug("token value "+token)
-            self.conn[conn_name].login(token, lambda stat, resp, cookie_jar:
-                    self._handle_login_lounge(conn_name, stat, resp, cookie_jar))
-        else:
+            self.logger.debug("token value " + token)
+            (stat, resp, cookie_jar) = self.conn[conn_name].login()
+
+            # logged in and received the drrr-session-1 cookie
+            self.logger.debug('status: %d, resp: %s' % (stat, resp))
+            if stat == 200:
+                resp_parsed = json.loads(resp)
+                if resp_parsed['message'] == 'ok':
+                    cookie_path = os.path.join(os.path.abspath(self.config_mgr.cookies_dir())
+                                               , self.conn[conn_name].id + ".cookie")
+                    self.logger.debug(cookie_path)
+                    cookie_jar.save(cookie_path)
+                    self.logger.debug("successfully logged in and cached cookies!")
+                else:
+                    self.logger.warning("not ok???")
+            else:
+                self.logger.warning("unable to perform login")
+
             self.logger.error("unable to obtain login token")
 
-    def login(self, conn_name):
-        self.conn[conn_name].get_login_token(lambda stat, resp:
-                                               self._handle_login_token(conn_name, stat, resp))
+
 
     """
     Resume the room loop if the saved cookies happens to be in a room
@@ -205,8 +212,7 @@ class bot:
         for key, value in config_mgr.get_conns().items():
             self.conn[key] = networking.connection(key, value['username_incl_tripcode'],
                                               value['avatar'],
-                                                   ("https://"  if config_mgr.use_https() else "http://") + config_mgr.drrr_domain(),
-                                                   self.onjoin, self.onleave, self.handler, config_mgr.get_http_retries())
+                                                   self.onjoin, self.onleave, self.handler, config_mgr.get_networking_block())
 
 
         # for i, x in enumerate(json_config['connections']):

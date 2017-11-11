@@ -19,7 +19,7 @@ class config_mgr:
         return self.cfg['plugin_spec'][name]
 
     def cookies_dir(self):
-        return self.cfg['cookies_dir']
+        return self.get_networking_block()['cookies_dir']
     def drrr_domain(self):
         return self.cfg['drrr_domain']
     def use_https(self):
@@ -28,6 +28,9 @@ class config_mgr:
         return self.cfg['connections']
     def get_http_retries(self):
         return self.cfg['http_failure_retries']
+
+    def get_networking_block(self):
+        return self.cfg['networking']
 
     def get_perms_block(self):
         return self.cfg['permissions']
@@ -42,13 +45,18 @@ class config_mgr:
     def sample_cfg_file(cls):
         cfg = configobj.ConfigObj("sample_" + config_mgr.CONFIG_FILE_LOCATION, unrepr=True)
         # cfg = configobj.ConfigObj("" + config_mgr.CONFIG_FILE_LOCATION, unrepr=True)
-        cfg['use_https'] = False
-        cfg['drrr_domain'] = 'drrr.com'
+
+        cfg['networking'] = {}
+        cfg['networking']['use_https'] = False
+        cfg['networking']['drrr_domain'] = 'drrr.com'
+        cfg['networking']['http_failure_retries'] = 5
+        cfg['networking']['cookies_dir'] = 'cookies'
+
         cfg['connections'] = {}
         cfg['connections']['default'] = {}
         cfg['connections']['default']["username_incl_tripcode"] = "Laksa#866&!xd$"
         cfg['connections']['default']["avatar"] = "zaika"
-        cfg['cookies_dir'] = 'cookies'
+
         cfg['plugin_spec'] = {}
         cfg['permissions'] = {}
 
