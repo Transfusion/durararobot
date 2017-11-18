@@ -6,6 +6,7 @@ import threading
 from modules.module import Module
 from popyo import *
 from datetime import datetime
+from decorators import *
 
 # also an example of how I would write a non blocking loop that does something at certain intervals
 # todo: refactor to support multiple rooms, likely broken
@@ -65,6 +66,18 @@ class TimeReporter(Module):
             self.repeating_tasks.add(conn_name)
             asyncio.run_coroutine_threadsafe(self._broadcast_time_loop(conn_name), self.event_loop)
 
+    @require_dm("Can only be called by an admin in DM.")
+    @require_admin("You are not an admin!!")
+    def _time_interval(self, wrapper, message):
+        split = message.message.split()
+        args = len(split) - 2
+        if args == 0:
+            wrapper.dm(str(self.conf['interval']) + " seconds")
+        elif args == 1 and split[-1].isdigit():
+            self.conf['interval'] = int(split[-1])
+            self._config_mgr.write()
+
+
 
     def handler(self, conn_name, message):
         if message.type == Message_Type.message:
@@ -79,18 +92,19 @@ class TimeReporter(Module):
             elif message.message == "!time now":
                 self.bot.send(conn=conn_name, msg=datetime.utcnow().strftime(self.conf['time_format'] ))
 
-        if message.type == Message_Type.dm:
-            if message.message.startswith("!time interval"):
-                split = message.message.split()
-                args = len(split) - 2
-                if args == 0:
-                    self.bot.dm(conn_name, message.sender.id, str(self.conf['interval']) + " seconds")
-                elif args == 1 and split[-1].isdigit():
-                    if self.perms_mgr.is_admin(message.sender):
-                        self.conf['interval'] = int(split[-1])
-                        self._config_mgr.write()
-                    else:
-                        self.bot.dm(conn_name, message.sender.id, "Error: You are not an admin")
+        # if message.type == Message_Type.dm:
+        if message.message.startswith("!time interval"):
+            self._time_interval(self.bot.get_wrapper(conn_name, message), message)
+                # split = message.message.split()
+                # args = len(split) - 2
+                # if args == 0:
+                #     self.bot.dm(conn_name, message.sender.id, str(self.conf['interval']) + " seconds")
+                # elif args == 1 and split[-1].isdigit():
+                #     if self.perms_mgr.is_admin(message.sender):
+                #         self.conf['interval'] = int(split[-1])
+                #         self._config_mgr.write()
+                #     else:
+                #         self.bot.dm(conn_name, message.sender.id, "Error: You are not an admin")
 
     def __init__(self, config_mgr, perms_mgr, bot):
         super(TimeReporter, self).__init__(config_mgr, perms_mgr, bot)

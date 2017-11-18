@@ -51,6 +51,9 @@ class config_mgr:
         cfg['networking']['drrr_domain'] = 'drrr.com'
         cfg['networking']['http_failure_retries'] = 5
         cfg['networking']['cookies_dir'] = 'cookies'
+        # min interval between messages to avoid 403
+        cfg['networking']['throttle'] = 0.35
+        cfg['networking']['char_limit'] = 150
 
         cfg['connections'] = {}
         cfg['connections']['default'] = {}

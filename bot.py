@@ -12,6 +12,7 @@ import logging
 import module_mgr
 import perms_mgr
 import traceback
+import popyo
 
 import asyncio
 import concurrent.futures
@@ -35,7 +36,8 @@ class bot:
 
     # todo, not called yet (supposed to only be called once), add scrollback?
     async def onjoin(self, loop, conn_name, scrollback):
-        pass
+        for k, v in self.module_mgr.get_modules().items():
+            loop.run_in_executor(self.executor, v.onjoin, conn_name, scrollback)
 
     async def onleave(self, loop, conn_name):
         # asyncio.Task.current_task().name = "cleanup"
@@ -50,8 +52,40 @@ class bot:
 ### callbacks end here
 
 ### sending begins here, meant to be called by plugins only
+
+    def get_wrapper(self, conn, msg):
+        return self.ReplyWrapper(self, conn, msg)
+
+    class ReplyWrapper:
+        def __init__(self, bot, conn, incoming_msg):
+            self._bot = bot
+            self._conn = conn
+            self._msg = incoming_msg
+
+        # replies automatically in DM or in the chan
+        def reply(self, msg):
+            if self._msg.type == popyo.Message_Type.dm:
+                self._bot.dm(self._conn, self._msg.sender.id, msg)
+            else:
+                self._bot.send(self._conn, msg)
+
+        def dm(self, msg):
+            self._bot.dm(self._conn, self._msg.sender.id, msg)
+
+        def am_host(self):
+            return self._bot.conn[self._conn].room.host_id == self._bot.conn[self._conn].own_user.id
+
+        def get_perms_mgr(self):
+            return self._bot.perms_mgr
+
+        def reply_url(self, msg, url):
+            pass
+
     def send(self, conn, msg):
         self.conn[conn].send(msg)
+
+    def action(self, conn, msg):
+        self.conn[conn].send("/me "+msg)
 
     def send_url(self, conn, msg, url):
         pass
@@ -63,7 +97,7 @@ class bot:
         pass
 
     def play_music(self, conn, name, url):
-        pass
+        self.conn[conn].play_music(name, url)
 
     def handover_host(self, conn, uid):
         self.conn[conn].handover_host(uid)
@@ -198,6 +232,7 @@ class bot:
         self.module_mgr = module_mgr.module_mgr(config_mgr, 'modules')
         self.module_mgr.load_module("TimeReporter", self)
         self.module_mgr.load_module("Admin", self)
+        self.module_mgr.load_module("Music", self)
 
         # time_reporter = getattr(importlib.import_module('modules.TimeReporter'), "TimeReporter")
         # print(time_reporter)

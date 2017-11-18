@@ -12,6 +12,7 @@ class Room:
         self.lang = lang
         self.room_id = room_id
         self.music = music
+        # self.dj_mode = music and dj_mode
         self.game = game
         self.host_id = host_id
 

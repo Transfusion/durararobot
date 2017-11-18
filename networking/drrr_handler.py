@@ -1,12 +1,10 @@
 from asyncio import *
 from threading import Thread
 import aiohttp
-import threading
-import functools
 import logging
-import queue
 import traceback
 import popyo
+import time
 
 # WRAP ALL HTTP STUFF WITH TRY - EXCEPT!!!!! OR ELSE IT BECOMES IMPOSSIBLE TO DEBUG!!
 class connection:
@@ -67,7 +65,7 @@ class connection:
         set_event_loop(loop)
         loop.run_forever()
 
-    # to manually kill the event loop
+    # to manually kill the event loop, should terminate the await in the send loop too
     def reset(self):
         gather(*Task.all_tasks(self.event_loop)).cancel()
         # for task in Task.all_tasks(self.event_loop):
@@ -78,6 +76,7 @@ class connection:
         self.room_connected = False
         self.room = None
         self.own_user = None
+        self.sendQ._queue.clear()
 
     # thread should automatically end once the loop inside it has stopped
     def close(self):
@@ -119,6 +118,8 @@ class connection:
         # The cookie jar implementation is provided by aiohttp, don't confuse it with http.cookiejar
         self.cookie_jar = aiohttp.CookieJar(unsafe=True)
         self.http_client_session = aiohttp.ClientSession(loop=self.event_loop, cookie_jar=self.cookie_jar, headers={'User-Agent': 'Bot'})
+
+        self.sendQ = Queue(loop=self.event_loop)
         # self.event_loop.run_coroutine(self.get_login_token, self.event_loop, endpoint, lambda x: print(x))
 
     # not needed, section name is unique in configobj anyways
@@ -174,7 +175,9 @@ class connection:
                         # event.wait()
                         await self._update_room_state(self._get_endpoint())
                         if self.room is not None:
+                            self.room_connected = True
                             run_coroutine_threadsafe(self._room_loop(), self.event_loop)
+                            run_coroutine_threadsafe(self._send_loop(), self.event_loop)
                         else:
                             print("unable to obtain the room state...")
                     else:
@@ -191,6 +194,10 @@ class connection:
     # only thing to worry about is if the room doesn't exist; {"error":"Room not found.","url":"\/\/drrr.com\/lounge\/?api=json"}
     def join_room(self, room_id):
         run_coroutine_threadsafe(self._join_room(self._get_endpoint(), room_id), self.event_loop)
+
+    # music, conceal, adult, game are booleans
+    def create_and_join_room(self, name, desc, limit, lang, music, conceal, adult, game):
+        pass
 
     async def _leave_room(self, endpoint):
         posted = False
@@ -259,7 +266,9 @@ class connection:
             # print(len([task for task in Task.all_tasks(self.event_loop) if not task.done()]))
             # print(Task.current_task())
             if self.room is not None:
+                self.room_connected = True
                 run_coroutine_threadsafe(self._room_loop(), self.event_loop)
+                run_coroutine_threadsafe(self._send_loop(), self.event_loop)
             else:
                 print("unable to obtain the room state...")
         elif stat == 401:
@@ -271,14 +280,22 @@ class connection:
 
     async def _room_loop(self):
         self.logger.debug("entering the room loop!")
-        self.room_connected = True
+        print(self.room_connected)
         # obtain the user ID and call the onJoin callback
 
         # GETting http://drrr.com/room/?api=json; the 'profile' key gives info about yourself
         async with self.http_client_session.get(self._get_endpoint() + "/room/?api=json") as resp:
-            resp_parsed = await resp.json()
-            if resp.status == 200 and 'error' not in resp_parsed:
-                self.own_user = self.room.users[resp_parsed['profile']['uid']]
+            try:
+                resp_parsed = await resp.json()
+                if resp.status == 200 and 'error' not in resp_parsed:
+                    self.own_user = self.room.users[resp_parsed['profile']['uid']]
+                    # TODO: Fix this..
+                # await self.onjoin_cb(self.event_loop, self.id, popyo.talks_to_msgs(resp_parsed['room']['talks'], self.room))
+                await self.onjoin_cb(self.event_loop, self.id,
+                                     None)
+
+            except Exception:
+                self.logger.debug(traceback.format_exc())
 
         while self.room_connected:
             # todo: do more exhaustive testing and refactor
@@ -342,6 +359,27 @@ class connection:
     # todo: throttle, easy to 403
     # todo: proper backoff algorithm, didn't figure out how to pass the event loop to libraries like riprova
 
+    async def _send_loop(self):
+        t = time.time()
+        while self.room_connected:
+            try:
+                outgoing_msg = await self.sendQ.get()
+                t1 = time.time()
+
+                if (t1 - t) < self.networking_config.as_float('throttle'):
+                    await sleep(self.networking_config.as_float('throttle'))
+
+                if self.room_connected:
+                    if outgoing_msg.type == popyo.Outgoing_Message_Type.message:
+                        await self._send(self._get_endpoint(), outgoing_msg.msg)
+                    elif outgoing_msg.type == popyo.Outgoing_Message_Type.dm:
+                        await self._dm(self._get_endpoint(), outgoing_msg.receiver, outgoing_msg.msg)
+
+                    t = time.time()
+            except Exception:
+                self.logger.debug(traceback.format_exc())
+
+
     async def _send(self, endpoint, msg):
         for i in range(0, self.networking_config['http_failure_retries']):
             try:
@@ -357,11 +395,21 @@ class connection:
                 self.logger.error(traceback.format_exc())
                 sleep(1)
 
+    async def _add_sendQ_outgoing(self, items):
+        for i in items:
+            await self.sendQ.put(i)
+
+        print(self.sendQ.qsize())
+
     def send(self, msg):
         if self.room_connected:
-            run_coroutine_threadsafe(self._send(self._get_endpoint(), msg), self.event_loop)
-        else:
-            self.logger.warning("Not Connected!")
+        #     run_coroutine_threadsafe(self._send(self._get_endpoint(), msg), self.event_loop)
+        # else:
+        #     self.logger.warning("Not Connected!")
+            chunked = [msg[i:i + self.networking_config.as_int('char_limit')]
+                       for i in range(0, len(msg), self.networking_config.as_int('char_limit'))]
+            msgs = [popyo.OutgoingMessage(chunk) for chunk in chunked]
+            run_coroutine_threadsafe(self._add_sendQ_outgoing(msgs), self.event_loop)
 
     async def _dm(self, endpoint, uid, msg):
         for i in range(0, self.networking_config['http_failure_retries']):
@@ -371,7 +419,7 @@ class connection:
                                                              data={'message': msg,
                                                                    'to': uid}) as resp:
                     if resp.status == 200:
-                        self.logger.debug("sent " + msg + " successfully")
+                        self.logger.debug("sent " + msg + " successfully" + " to " +uid)
                     else:
                         self.logger.debug("sending " + msg + "failed with err " + str(resp.status))
                     return
@@ -381,10 +429,10 @@ class connection:
                 sleep(1)
 
     def dm(self, uid, msg):
-        if self.room_connected:
-            run_coroutine_threadsafe(self._dm(self._get_endpoint(),uid, msg), self.event_loop)
-        else:
-            self.logger.warning("Not Connected!")
+        chunked = [msg[i:i + self.networking_config.as_int('char_limit')]
+                   for i in range(0, len(msg), self.networking_config.as_int('char_limit'))]
+        msgs = [popyo.OutgoingDirectMessage(chunk, uid) for chunk in chunked]
+        run_coroutine_threadsafe(self._add_sendQ_outgoing(msgs), self.event_loop)
 
     async def _handover_host(self, endpoint, uid):
         for i in range(0, self.networking_config['http_failure_retries']):
@@ -401,6 +449,27 @@ class connection:
     def handover_host(self, uid):
         if self.room_connected:
             run_coroutine_threadsafe(self._handover_host(self._get_endpoint(), uid), self.event_loop)
+        else:
+            self.logger.warning("Not Connected!")
+
+
+    async def _play_music(self, endpoint, name, url):
+        for i in range(0, self.networking_config['http_failure_retries']):
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                             data={'music': 'music',
+                                                                   'name': name,
+                                                                   'url': url}) as resp:
+                    if resp.status == 200:
+                        pass
+                    return
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def play_music(self, name, url):
+        if self.room_connected:
+            run_coroutine_threadsafe(self._play_music(self._get_endpoint(), name, url), self.event_loop)
         else:
             self.logger.warning("Not Connected!")
     # get available rooms
