@@ -1,7 +1,8 @@
 from modules.module import Module
 from popyo import *
+from decorators import *
 
-# TODO: allow drrr admins to do whatever they want
+# DONE: allow drrr admins to do whatever they want
 class Admin(Module):
 
     def unload(self):
@@ -18,34 +19,26 @@ class Admin(Module):
     def name():
         return "Admin"
 
-    def _process_kick(self, conn_name, message):
-        pass
+    # @require_admin("You are not an admin!!")
+    # @require_host("I'm not the host!!")
+    # def _process_kick(self, wrapper, message):
+    #     self.bot.kick()
 
-    def _process_give_host(self, conn_name, message):
-        # todo: expose a neater interface; e.g. get_conn().is_host()
-        if self.bot.conn[conn_name].room.host_id != self.bot.conn[conn_name].own_user.id:
-            s = "I'm not the host!"
-            if message.type == Message_Type.message:
-                self.bot.send(conn_name, s)
-            else:
-                self.bot.dm(conn_name, message.sender.id, s)
-        else:
-            if message.sender.tripcode is not None and self.perms_mgr.is_admin(message.sender):
-                self.bot.handover_host(conn_name, message.sender.id)
-            else:
-                s = "You are not an admin!"
-                if message.type == Message_Type.message:
-                    self.bot.send(conn_name, s)
-                else:
-                    self.bot.dm(conn_name, message.sender.id, s)
+    # todo: expose a neater interface; e.g. get_conn().is_host()
+
+    @require_admin("You are not an admin!!")
+    @require_host("I'm not the host!!")
+    def _givemehost(self, wrapper, message):
+        self.bot.handover_host(wrapper._conn, message.sender.id)
+
 
     # admins can make the bot part, enforce rejoin if kicked... kick/ban others..
     def handler(self, conn_name, message):
-        if message.type == Message_Type.message or message.type == Message_Type.dm:
-            if message.message == "!admin givemehost":
-                self._process_give_host(conn_name, message)
-            if message.message.startswith("!admin kick"):
-                self._process_kick(conn_name, message)
+        if message.message == "!admin givemehost":
+            # self._process_give_host(conn_name, message)
+            self._givemehost(self.bot.get_wrapper(conn_name, message), message)
+        # if message.message.startswith("!admin kick"):
+        #     self._process_kick(conn_name, message)
 
 
     def __init__(self, config_mgr, perms_mgr, bot):
