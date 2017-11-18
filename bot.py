@@ -178,7 +178,7 @@ class bot:
             resp_parsed = json.loads(resp)
             token = resp_parsed['token']
             self.logger.debug("token value " + token)
-            (stat, resp, cookie_jar) = self.conn[conn_name].login()
+            (stat, resp, cookie_jar) = self.conn[conn_name].login(token)
 
             # logged in and received the drrr-session-1 cookie
             self.logger.debug('status: %d, resp: %s' % (stat, resp))
@@ -194,7 +194,7 @@ class bot:
                     self.logger.warning("not ok???")
             else:
                 self.logger.warning("unable to perform login")
-
+        else:
             self.logger.error("unable to obtain login token")
 
 
