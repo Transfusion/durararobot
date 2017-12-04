@@ -22,3 +22,9 @@ class OutgoingDirectMessage:
         self.type = Outgoing_Message_Type.dm
         self.msg = msg
         self.receiver = receiver
+
+class OutgoingUrlMessage:
+    def __init__(self, msg, url):
+        self.type = Outgoing_Message_Type.url
+        self.msg = msg
+        self.url = url

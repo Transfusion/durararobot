@@ -4,14 +4,26 @@ import logging
 
 from .message import *
 from .user import *
+import time
 
-"""Converts the talks list into a list of messages, room is the room object"""
+def create_cli_message_chan(text):
+    return Message('a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1', str(round(time.time(), 3)), Message_Type.message, CLIUser(), text)
+
+def create_cli_message_dm(text):
+    return DirectMessage('a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1', str(round(time.time(), 3)),
+                         Message_Type.dm, CLIUser(), CLIUser(), text)
+
+
+
 def talks_to_msgs(messages, room):
+    """Converts the talks list into a list of messages, room is the room object"""
     return [talk_to_msg(m, room) for m in messages]
 
 
-"""msg is one individual json object representing a talk"""
+
 def talk_to_msg(msg, room):
+    """msg is one individual json object representing a talk"""
+
     # self, id, time, type, sender, message):
 
     if msg['type'] == 'message':
@@ -39,7 +51,7 @@ def talk_to_msg(msg, room):
 
     elif msg['type'] == 'me':
         # id, time, sender, content):
-        m = MeMessage(msg['id'], msg['time'], room.users[msg['from']['id']], msg['message'])
+        m = MeMessage(msg['id'], msg['time'], room.users[msg['from']['id']], msg['content'])
 
     elif msg['type'] == 'new-host':
         m = NewHostMessage(msg['id'], msg['time'], room.users[msg['user']['id']])
@@ -60,4 +72,16 @@ def talk_to_msg(msg, room):
     elif msg['type'] == 'kick':
         m = KickMessage(msg['id'], msg['time'], room.users[msg['to']['id']], msg['message'])
 
+    elif msg['type'] == 'ban':
+        m = BanMessage(msg['id'], msg['time'], room.users[msg['to']['id']], msg['message'])
+
+    elif msg['type'] == 'unban':
+        m = UnbanMessage(msg['id'], msg['time'], room.banned_users[msg['to']['id']], msg['message'])
+
+
+    elif 'error' in msg:
+        if 'reload' in msg:
+            m = ErrorMessage(msg['error'], msg['reload'])
+        else:
+            m = ErrorMessage(msg['error'])
     return m

@@ -10,3 +10,6 @@ class User:
 
     def __str__(self):
         return "id: %s name: %s icon: %s tc: %s" % (self.id, self.name, self.icon, self.tripcode)
+
+class CLIUser:
+    pass

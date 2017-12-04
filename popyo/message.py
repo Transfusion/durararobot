@@ -12,10 +12,22 @@ class Message_Type(Enum):
     new_host = 5
     async_response = 9
     kick = 10
+    ban = 11
+    unban = 12
+
 #     my own fields
     dm = 6
     url = 7
     dm_url = 8
+
+
+    error = -1
+
+class ErrorMessage:
+    def __init__(self, text, reload=False):
+        self.type = Message_Type.error
+        self.text = text
+        self.reload = reload
 
 class KickMessage:
     def __init__(self, id, time, to, message):
@@ -24,6 +36,22 @@ class KickMessage:
         self.to = to
         self.message = message
         self.type = Message_Type.kick
+
+class BanMessage:
+    def __init__(self, id, time, to, message):
+        self.id = id
+        self.time = time
+        self.to = to
+        self.message = message
+        self.type = Message_Type.ban
+
+class UnbanMessage:
+    def __init__(self, id, time, to, message):
+        self.id = id
+        self.time = time
+        self.to = to
+        self.message = message
+        self.type = Message_Type.unban
 
 # usually in response to events like getting kicked, unable to play music, etc
 # todo: check whether the stop_fetching field is always present

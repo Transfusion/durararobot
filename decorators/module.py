@@ -5,6 +5,23 @@ import popyo
 def require_god(message=None):
     pass
 
+def not_cli(message=None):
+    """exits if the message is from the CLI"""
+    def actual_decorator(function):
+        @functools.wraps(function)
+        def _nop(*args, **kwargs):
+            wrapper, incoming_message = args[1], args[2]
+            if not isinstance(incoming_message.sender, popyo.CLIUser):
+                return function(*args, **kwargs)
+            else:
+                wrapper.debug_to_cli(message)
+
+        return _nop
+
+    if callable(message):
+        return actual_decorator(message)
+
+    return actual_decorator
 
 def require_admin(message=None):
     def actual_decorator(function):

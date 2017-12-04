@@ -57,7 +57,10 @@ class module_mgr:
     def unload_module(self, name):
         try:
             # each module should be responsible for stopping their own threads and cleaning up. This method should block
+
             self.modules[name].unload()
+            self.modules[name].cancel_all_event_loops()
+
             del self.modules[name]
             del sys.modules[self.mods_dir + '.' + name]
             del sys.modules[self.mods_dir + '.' + name + '.' + name]
@@ -79,6 +82,13 @@ class module_mgr:
     # defeats the purpose of encapsulation, refactor later
     def get_modules(self):
         return self.modules
+
+    def is_loaded(self, module_name):
+        return module_name in self.modules
+
+    def reload_cfg(self):
+        for _, v in self.modules.items():
+            v.load_config()
 
 #     todo: method to send method to specific module, for efficiency...
 
