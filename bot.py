@@ -1,18 +1,16 @@
 from cmd import Cmd
 import networking
 
-import importlib
 import json
 import os
-import threading
-import functools
-import queue
 import datetime
 import logging
 import module_mgr
 import perms_mgr
 import traceback
 import popyo
+
+from modules.module import Module
 
 import asyncio
 import concurrent.futures
@@ -28,6 +26,14 @@ class bot:
     module_mgr = None
 
     executor = None
+
+
+### Methods to make accessing room state and users easier
+    def get_own_user(self, conn_name):
+        return self.conn[conn_name].own_user
+
+    def get_room(self, conn_name):
+        return self.conn[conn_name].room
 
 ### callbacks when in a room loop begin here
 # for simplicity just call these directly from the connection loop INSIDE ITS THREAD
@@ -46,9 +52,23 @@ class bot:
 
     # allow the plugin to access the room from the bot
     async def handler(self, loop, conn_name, message):
+
+        # at least one CMD_VALID
+        at_least_one = False
         for k, v in self.module_mgr.get_modules().items():
             # asyncio.ensure_future(loop.run_in_executor(self.executor,v.handler, conn_name, message))
-            loop.run_in_executor(self.executor, v.handler, conn_name, message)
+            if v.check_cmd == Module.CMD_VALID:
+                at_least_one = True
+            elif v.check_cmd == Module.CMD_PARTIALLY_VALID:
+                # TODO: print the help for the specific cmd
+                pass
+            else:
+                loop.run_in_executor(self.executor, v.handler, conn_name, message)
+
+        if not at_least_one:
+            # TODO: print the global help url or list of commands
+            pass
+
 ### callbacks end here
 
 ### sending begins here, meant to be called by plugins only
@@ -58,12 +78,28 @@ class bot:
 
     class ReplyWrapper:
         def __init__(self, bot, conn, incoming_msg):
+            # self.logger = logging.getLogger(__name__)
+            # self.logger.setLevel(logging.DEBUG)
+            #
+            # ch = logging.StreamHandler()
+            # ch.setLevel(logging.DEBUG)
+            # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            # ch.setFormatter(formatter)
+            # self.logger.addHandler(ch)
+
             self._bot = bot
             self._conn = conn
             self._msg = incoming_msg
 
+        def debug_to_cli(self, msg):
+            self._bot.logger.debug("cli response: " + msg)
+
         # replies automatically in DM or in the chan
         def reply(self, msg):
+            if isinstance(self._msg.sender, popyo.CLIUser):
+                self.debug_to_cli(msg)
+                return
+
             if self._msg.type == popyo.Message_Type.dm:
                 self._bot.dm(self._conn, self._msg.sender.id, msg)
             else:
@@ -81,6 +117,9 @@ class bot:
         def reply_url(self, msg, url):
             pass
 
+        def get_conn(self):
+            return self._conn
+
     def send(self, conn, msg):
         self.conn[conn].send(msg)
 
@@ -88,7 +127,7 @@ class bot:
         self.conn[conn].send("/me "+msg)
 
     def send_url(self, conn, msg, url):
-        pass
+        self.conn[conn].send_url(msg, url)
 
     def dm(self, conn, uid, msg):
         self.conn[conn].dm(uid, msg)
@@ -103,7 +142,7 @@ class bot:
         self.conn[conn].handover_host(uid)
 
     def kick(self, conn, uid):
-        pass
+        self.conn[conn].kick(uid)
 
     def ban(self, conn, uid):
         pass
@@ -210,6 +249,11 @@ class bot:
         else:
             self.logger.debug("no saved cookies for conn "+ str(conn_name))
 
+    def reload_cfg(self):
+        self.config_mgr.reload_from_file()
+        self.module_mgr.reload_cfg()
+        self.perms_mgr.load_perms_block()
+
     def __init__(self, config_mgr):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
@@ -232,7 +276,8 @@ class bot:
         self.module_mgr = module_mgr.module_mgr(config_mgr, 'modules')
         self.module_mgr.load_module("TimeReporter", self)
         self.module_mgr.load_module("Admin", self)
-        self.module_mgr.load_module("Music", self)
+        # self.module_mgr.load_module("DiscordBridge", self)
+        # self.module_mgr.load_module("Music", self)
 
         # time_reporter = getattr(importlib.import_module('modules.TimeReporter'), "TimeReporter")
         # print(time_reporter)
@@ -344,6 +389,31 @@ class BotCLI(Cmd):
                                                        datetime.datetime.fromtimestamp(int(i['since'])).strftime('%Y-%m-%d %H:%M:%S'),
                                                        str(i['total']) + "/" + str(i['limit'])))
 
+
+    # cmd chan conn !kick blahblah
+    def do_cmd(self, args):
+        """Issues a bot command as if the user was a god from inside the room."""
+        arg_split = args.split()
+        conn_name = arg_split[1]
+
+        msg = " ".join(arg_split[2:])
+
+        if len(arg_split) < 3:
+            print("provide a conn name")
+        elif arg_split[0] == 'dm':
+            m = popyo.utils.create_cli_message_dm(msg)
+        elif arg_split[0] == 'chan':
+            m = popyo.utils.create_cli_message_chan(msg)
+
+
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(self.bot.handler(loop, conn_name, m))
+        loop.close()
+
+    # POSTs a raw command.
+    def do_raw(self, args):
+        pass
+
     # todo: handle more specific types of non-fatal exceptions..
     def cmdloop_with_keyboard_interrupt(self):
         # doQuit = False
@@ -386,10 +456,23 @@ class BotCLI(Cmd):
     def do_save_cfg(self, args):
         pass
 
+    def do_reload_cfg(self, args):
+        self.bot.reload_cfg()
 
-    def do_cmd(self, args):
-        """execute a command as if from within drrr"""
-        pass
+    def do_loglevel(self, args):
+        """Set the global loglevel."""
+        arg_split = args.split()
+        if len(arg_split) != 1:
+            print("single arg, logging level")
+        else:
+            # logger = logging.getLogger()
+            lvl = logging.getLevelName(arg_split[0].upper())
+            print("parsed logging level: "+ str(lvl))
+            if isinstance(lvl, str):
+                print("invalid built in loglevel")
+            else:
+                logging.disable(lvl)
+
 
 
 # admin plugin first, next!!! join other rooms, handover OP, say, etc.

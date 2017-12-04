@@ -280,6 +280,10 @@ class connection:
 
     async def _room_loop(self):
         self.logger.debug("entering the room loop!")
+
+        self.last_error = False
+        self.exit_loop = False
+
         print(self.room_connected)
         # obtain the user ID and call the onJoin callback
 
@@ -307,7 +311,8 @@ class connection:
                     stat = resp.status
 
                     self.logger.debug(resp_parsed)
-                    if stat == 200 and 'error' not in resp_parsed and 'roomId' in resp_parsed:
+                    # if stat == 200 and 'error' not in resp_parsed and 'roomId' in resp_parsed:
+                    if stat == 200:
                         if 'talks' in resp_parsed:
                             try:
                                 msgs = popyo.talks_to_msgs(resp_parsed['talks'], self.room)
@@ -319,27 +324,62 @@ class connection:
                                             # self.room_connected = False
                                             # self.room = None
                                             # self.own_user = None
+                                            self.exit_loop = True
                                             break
                                         else:
                                     #         update the room state
                                             del self.room.users[msg.sender.id]
                                     if msg.type == popyo.Message_Type.new_host:
                                         self.room.host_id = msg.sender.id
+
                                     elif msg.type == popyo.Message_Type.async_response:
                                         if msg.stop_fetching:
+                                            self.exit_loop = True
                                             break
+
+                                    elif msg.type == popyo.Message_Type.kick:
+                                        if msg.to.id != self.own_user.id:
+                                            del self.room.users[msg.to.id]
+                                            await self.msg_cb(self.event_loop, self.id, msg)
+
+                                    elif msg.type == popyo.Message_Type.ban:
+                                        if msg.to.id != self.own_user.id:
+                                            # update the ban list in case we need to unban in the future
+                                            self.room.banned_users[msg.to.id] = self.room.users[msg.to.id]
+                                            del self.room.users[msg.to.id]
+                                            await self.msg_cb(self.event_loop, self.id, msg)
+
+                                    elif msg.type == popyo.Message_Type.unban:
+                                        del self.room.banned_users[msg.to.id]
+                                        await self.msg_cb(self.event_loop, self.id, msg)
+
+                                    elif msg.type == popyo.Message_Type.error:
+                                        # might be the spurious bug , fetch again and check if it isn't error
+                                        if msg.reload and not self.last_error:
+                                            self.last_error = True
+                                            pass
+
+                                        else:
+                                            self.exit_loop = True
+                                            break
+
                                     elif msg.type != popyo.Message_Type.kick and \
                                                     msg.type != popyo.Message_Type.async_response and \
                                                     msg.sender.id != self.own_user.id:
                                         await self.msg_cb(self.event_loop, self.id, msg)
 
+                                    self.last_error = False
+
+                                if self.exit_loop:
+                                    break
+
                             except Exception as e:
                                 self.logger.error("deserializing failed!!!")
                                 self.logger.error(traceback.format_exc())
-                            self.room.update = resp_parsed['update']
 
                         else:
                             self.logger.debug("idled successfully")
+                        self.room.update = resp_parsed['update']
                     else:
                         self.logger.debug("malformed message!")
                         break
@@ -374,6 +414,8 @@ class connection:
                         await self._send(self._get_endpoint(), outgoing_msg.msg)
                     elif outgoing_msg.type == popyo.Outgoing_Message_Type.dm:
                         await self._dm(self._get_endpoint(), outgoing_msg.receiver, outgoing_msg.msg)
+                    elif outgoing_msg.type == popyo.Outgoing_Message_Type.url:
+                        await self._send_url(self._get_endpoint(), outgoing_msg.msg, outgoing_msg.url)
 
                     t = time.time()
             except Exception:
@@ -399,8 +441,6 @@ class connection:
         for i in items:
             await self.sendQ.put(i)
 
-        print(self.sendQ.qsize())
-
     def send(self, msg):
         if self.room_connected:
         #     run_coroutine_threadsafe(self._send(self._get_endpoint(), msg), self.event_loop)
@@ -410,6 +450,32 @@ class connection:
                        for i in range(0, len(msg), self.networking_config.as_int('char_limit'))]
             msgs = [popyo.OutgoingMessage(chunk) for chunk in chunked]
             run_coroutine_threadsafe(self._add_sendQ_outgoing(msgs), self.event_loop)
+
+    async def _send_url(self, endpoint, msg, url):
+        for i in range(0, self.networking_config['http_failure_retries']):
+
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                             data={'message': msg,
+                                                                   'url': url}) as resp:
+                    if resp.status == 200:
+                        self.logger.debug("sent " + msg + " successfully" + " with url " + url)
+                    else:
+                        self.logger.debug("sending " + msg + "failed with err " + str(resp.status))
+                    return
+
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def send_url(self, msg, url):
+        chunked = [msg[i:i + self.networking_config.as_int('char_limit')]
+                   for i in range(0, len(msg), self.networking_config.as_int('char_limit'))]
+
+        msgs = [popyo.OutgoingMessage(chunk) for chunk in chunked[:-1] ]
+        msgs.append(popyo.OutgoingUrlMessage(chunked[-1], url))
+
+        run_coroutine_threadsafe(self._add_sendQ_outgoing(msgs), self.event_loop)
 
     async def _dm(self, endpoint, uid, msg):
         for i in range(0, self.networking_config['http_failure_retries']):

@@ -6,6 +6,7 @@ Consider making it more fine-grained in the future (e.g. user/pass system)"""
 # https://pypkg.com/pypi/limnoria/f/plugins/User/plugin.py
 
 import logging
+import popyo
 
 class perms_mgr():
     def __init__(self, config_mgr):
@@ -19,7 +20,10 @@ class perms_mgr():
 
 
         self.config_mgr = config_mgr
-        self.perms_block = config_mgr.get_perms_block()
+        self.load_perms_block()
+
+    def load_perms_block(self):
+        self.perms_block = self.config_mgr.get_perms_block()
 
     def get_perms_block(self, plugin_name):
         if plugin_name not in self.perms_block.keys():
@@ -41,8 +45,10 @@ class perms_mgr():
 
     # user is a user object
     def is_admin(self, user):
-        return (user.name, user.tripcode) in self.perms_block['admins'] \
-               or (user.name, user.tripcode) in self.perms_block['gods'] or user.drrr_admin
+        return self.is_god(user) or (user.name, user.tripcode) in self.perms_block['admins']
+
+    def is_god(self, user):
+        return isinstance(user, popyo.CLIUser) or (user.name, user.tripcode) in self.perms_block['gods'] or user.drrr_admin
 
     def is_allowed(self, plugin_name, cmd_name, username, tripcode):
         return (username, tripcode) in self.perms_block[plugin_name][cmd_name]

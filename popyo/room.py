@@ -8,6 +8,7 @@ class Room:
         self.limit = limit
         self.users = users
 
+        self.banned_users = {}
 
         self.lang = lang
         self.room_id = room_id

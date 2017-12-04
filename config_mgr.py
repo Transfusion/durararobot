@@ -36,7 +36,7 @@ class config_mgr:
         return self.cfg['permissions']
 
     def __init__(self):
-        self.cfg = configobj.ConfigObj(config_mgr.CONFIG_FILE_LOCATION, unrepr=True)
+        self.cfg = configobj.ConfigObj(config_mgr.CONFIG_FILE_LOCATION, encoding='utf8', unrepr=True)
 
     def reload_from_file(self):
         self.cfg.reload()
