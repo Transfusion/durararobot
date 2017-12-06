@@ -3,7 +3,23 @@ import functools
 import popyo
 
 def require_god(message=None):
-    pass
+    def actual_decorator(function):
+        @functools.wraps(function)
+        def _nop(*args, **kwargs):
+            wrapper, incoming_message = args[1], args[2]
+            if wrapper.get_perms_mgr().is_god(incoming_message.sender):
+                return function(*args, **kwargs)
+            else:
+                wrapper.dm(message)
+
+        return _nop
+
+    if callable(message):
+        return actual_decorator(message)
+
+    return actual_decorator
+
+
 
 def not_cli(message=None):
     """exits if the message is from the CLI"""

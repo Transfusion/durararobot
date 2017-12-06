@@ -118,7 +118,8 @@ class bot:
             pass
 
         def get_conn(self):
-            return self._conn
+            # return self._conn
+            return self._bot.conn[self._conn]
 
     def send(self, conn, msg):
         self.conn[conn].send(msg)
@@ -145,16 +146,19 @@ class bot:
         self.conn[conn].kick(uid)
 
     def ban(self, conn, uid):
-        pass
+        self.conn[conn].ban(uid)
 
-    def report_ban(self, conn, uid):
-        pass
+    def report_and_ban(self, conn, uid):
+        self.conn[conn].report_and_ban(uid)
 
     def set_room_name(self, conn, name):
         pass
 
     def set_room_topic(self, conn, desc):
         pass
+
+    def set_dj_mode(self, conn, is_dj_mode):
+        self.conn[conn].set_dj_mode(is_dj_mode)
 
 ### sending ends here
 
@@ -178,7 +182,6 @@ class bot:
     def leave(self, conn_name):
         if self.conn[conn_name].room is not None:
             self.conn[conn_name].leave_room()
-        pass
 
     # similar to login/resume just print errors from within this function
     # don't need to be blocking/callback for now?? (perhaps turn it into a proper library and make exceptions later

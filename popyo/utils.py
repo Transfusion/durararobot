@@ -26,7 +26,13 @@ def talk_to_msg(msg, room):
 
     # self, id, time, type, sender, message):
 
-    if msg['type'] == 'message':
+    if 'error' in msg:
+        if 'reload' in msg:
+            m = ErrorMessage(msg['error'], msg['reload'])
+        else:
+            m = ErrorMessage(msg['error'])
+
+    elif msg['type'] == 'message':
         if 'url' in msg:
             if 'to' in msg:
                 # (self, id, time, type, sender, receiver, message, url)
@@ -79,9 +85,7 @@ def talk_to_msg(msg, room):
         m = UnbanMessage(msg['id'], msg['time'], room.banned_users[msg['to']['id']], msg['message'])
 
 
-    elif 'error' in msg:
-        if 'reload' in msg:
-            m = ErrorMessage(msg['error'], msg['reload'])
-        else:
-            m = ErrorMessage(msg['error'])
+    elif msg['type'] == 'system':
+        m = SystemMessage(msg['id'], msg['time'], msg)
+
     return m

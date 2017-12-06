@@ -14,6 +14,7 @@ class Message_Type(Enum):
     kick = 10
     ban = 11
     unban = 12
+    system = 13
 
 #     my own fields
     dm = 6
@@ -52,6 +53,13 @@ class UnbanMessage:
         self.to = to
         self.message = message
         self.type = Message_Type.unban
+
+class SystemMessage:
+    def __init__(self, id, time, message):
+        self.id = id
+        self.time = time
+        self.message = message
+        self.type = Message_Type.system
 
 # usually in response to events like getting kicked, unable to play music, etc
 # todo: check whether the stop_fetching field is always present

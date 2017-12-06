@@ -227,7 +227,7 @@ class connection:
     # perhaps make it varargs so we can make it blocking if we want to???
     # todo: figure out exception catching in the event loop's thread... hard to debug
     # need to check for edge cases such as if we have just been kicked
-    async def _update_room_state(self, endpoint):
+    async def _update_room_state(self, endpoint, preserve_banned=False):
         for i in range(0, self.networking_config['http_failure_retries']):
             try:
                 async with self.http_client_session.get(endpoint + "/json.php?fast=1") as resp:
@@ -245,10 +245,14 @@ class connection:
                                 users[user['id']] = popyo.User(user['id'], user['name'], user['icon'],
                                                                user['tripcode'] if "tripcode" in user.keys() else None,
                                                                True if 'admin' in user.keys() and user['admin'] else False)
+
+                            banned_users = self.room.banned_users if preserve_banned else {}
                             # (self, name, desc, limit, users, lang, room_id, music, game, host_id):
                             self.room = popyo.Room(resp_parsed['name'], resp_parsed['description'], resp_parsed['limit'], users, resp_parsed['language'],
-                                                   resp_parsed['roomId'], resp_parsed['music'], resp_parsed['gameRoom'],
+                                                   resp_parsed['roomId'], resp_parsed['music'], resp_parsed['djMode'], resp_parsed['gameRoom'],
                                                    resp_parsed['host'], resp_parsed['update'])
+                            self.room.banned_users = banned_users
+
 
                     return
             except Exception:
@@ -352,6 +356,9 @@ class connection:
                                     elif msg.type == popyo.Message_Type.unban:
                                         del self.room.banned_users[msg.to.id]
                                         await self.msg_cb(self.event_loop, self.id, msg)
+
+                                    elif msg.type == popyo.Message_Type.system:
+                                        await self._update_room_state(self._get_endpoint(), preserve_banned=True)
 
                                     elif msg.type == popyo.Message_Type.error:
                                         # might be the spurious bug , fetch again and check if it isn't error
@@ -518,6 +525,60 @@ class connection:
         else:
             self.logger.warning("Not Connected!")
 
+    async def _kick(self, endpoint, uid):
+        for i in range(0, self.networking_config['http_failure_retries']):
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                             data={'kick': uid}) as resp:
+                    if resp.status == 200:
+                        self.logger.debug("successfully kicked " + self.room.users[uid].name)
+                    return
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def kick(self, uid):
+        if self.room_connected:
+            run_coroutine_threadsafe(self._kick(self._get_endpoint(), uid), self.event_loop)
+        else:
+            self.logger.warning("Not Connected!")
+
+    async def _ban(self, endpoint, uid):
+        for i in range(0, self.networking_config['http_failure_retries']):
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                             data={'ban': uid}) as resp:
+                    if resp.status == 200:
+                        self.logger.debug("successfully banned " + self.room.users[uid].name)
+                    return
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def ban(self, uid):
+        if self.room_connected:
+            run_coroutine_threadsafe(self._ban(self._get_endpoint(), uid), self.event_loop)
+        else:
+            self.logger.warning("Not Connected!")
+
+    async def _report_and_ban(self, endpoint, uid):
+        for i in range(0, self.networking_config['http_failure_retries']):
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                             data={'report_and_ban_user': uid}) as resp:
+                    if resp.status == 200:
+                        self.logger.debug("successfully reported and banned " + self.room.users[uid].name)
+                    return
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def report_and_ban(self, uid):
+        if self.room_connected:
+            run_coroutine_threadsafe(self._report_and_ban(self._get_endpoint(), uid), self.event_loop)
+        else:
+            self.logger.warning("Not Connected!")
+
 
     async def _play_music(self, endpoint, name, url):
         for i in range(0, self.networking_config['http_failure_retries']):
@@ -536,6 +597,25 @@ class connection:
     def play_music(self, name, url):
         if self.room_connected:
             run_coroutine_threadsafe(self._play_music(self._get_endpoint(), name, url), self.event_loop)
+        else:
+            self.logger.warning("Not Connected!")
+
+
+    async def _set_dj_mode(self, endpoint, is_dj_mode):
+        for i in range(0, self.networking_config['http_failure_retries']):
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                             data={'dj_mode': str(is_dj_mode).lower()}) as resp:
+                    if resp.status == 200:
+                        pass
+                    return
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def set_dj_mode(self, is_dj_mode):
+        if self.room_connected:
+            run_coroutine_threadsafe(self._set_dj_mode(self._get_endpoint(), is_dj_mode), self.event_loop)
         else:
             self.logger.warning("Not Connected!")
     # get available rooms
