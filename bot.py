@@ -152,10 +152,10 @@ class bot:
         self.conn[conn].report_and_ban(uid)
 
     def set_room_name(self, conn, name):
-        pass
+        self.conn[conn].set_room_name(name)
 
-    def set_room_topic(self, conn, desc):
-        pass
+    def set_room_desc(self, conn, desc):
+        self.conn[conn].set_room_desc(desc)
 
     def set_dj_mode(self, conn, is_dj_mode):
         self.conn[conn].set_dj_mode(is_dj_mode)

@@ -88,4 +88,11 @@ def talk_to_msg(msg, room):
     elif msg['type'] == 'system':
         m = SystemMessage(msg['id'], msg['time'], msg)
 
+
+    elif msg['type'] == 'room-profile':
+        m = RoomProfileMessage(msg['id'], msg['time'], room.users[room.host_id])
+
+    elif msg['type'] == 'new-description':
+        m = NewDescMessage(msg['id'], msg['time'], room.users[msg['from']['id']])
+
     return m

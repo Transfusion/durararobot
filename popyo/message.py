@@ -15,6 +15,8 @@ class Message_Type(Enum):
     ban = 11
     unban = 12
     system = 13
+    room_profile = 14
+    new_description = 15
 
 #     my own fields
     dm = 6
@@ -60,6 +62,24 @@ class SystemMessage:
         self.time = time
         self.message = message
         self.type = Message_Type.system
+
+class RoomProfileMessage:
+    def __init__(self, id, time, sender):
+        self.id = id
+        self.time = time
+        # There is no sender field in the actual json
+        self.sender = sender
+        self.message = ""
+        self.type = Message_Type.room_profile
+
+class NewDescMessage:
+    def __init__(self, id, time, sender):
+        self.id = id
+        self.time = time
+        self.sender = sender
+        self.type = Message_Type.new_description
+        self.message = '{1} set the room topic: {2}'
+
 
 # usually in response to events like getting kicked, unable to play music, etc
 # todo: check whether the stop_fetching field is always present

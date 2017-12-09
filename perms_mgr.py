@@ -53,6 +53,13 @@ class perms_mgr():
     def is_allowed(self, plugin_name, cmd_name, username, tripcode):
         return (username, tripcode) in self.perms_block[plugin_name][cmd_name]
 
+    """remember that admin block is a list of tuples"""
+    def get_admin_block(self):
+        return self.perms_block['admins']
+
+    def get_gods_block(self):
+        return self.perms_block['gods']
+
     # do not use lightly!!
     def remove_admin(self, username, tripcode):
         pass
@@ -60,6 +67,8 @@ class perms_mgr():
     def remove_allowed(self, plugin_name, cmd_name, username, tripcode):
         if (username, tripcode) in self.perms_block[plugin_name][cmd_name]:
             self.perms_block[plugin_name][cmd_name].remove((username, tripcode))
+            return True
         else:
             self.logger.error(str((username, tripcode)) + " is not in " + plugin_name + "."
                               + cmd_name + "'s allowed list")
+            return False

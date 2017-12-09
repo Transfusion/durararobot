@@ -193,25 +193,24 @@ class connection:
 
     # only thing to worry about is if the room doesn't exist; {"error":"Room not found.","url":"\/\/drrr.com\/lounge\/?api=json"}
     def join_room(self, room_id):
-        run_coroutine_threadsafe(self._join_room(self._get_endpoint(), room_id), self.event_loop)
+        future = run_coroutine_threadsafe(self._join_room(self._get_endpoint(), room_id), self.event_loop)
+        return future.result()
 
     # music, conceal, adult, game are booleans
     def create_and_join_room(self, name, desc, limit, lang, music, conceal, adult, game):
         pass
 
     async def _leave_room(self, endpoint):
-        posted = False
-        while not posted:
+        for i in range(0, self.networking_config['http_failure_retries']):
             try:
                 async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
                                                          data={'leave': 'leave'}) as resp:
                     if resp.status == 200:
                         self.logger.debug("leave posted")
                         await resp.text()
-                        posted = True
                     else:
                         self.logger.error("leave room failed " + str(resp.status) + await resp.text())
-                        # return
+                    return
 
             except Exception:
                 await sleep(1)
@@ -221,7 +220,8 @@ class connection:
     def leave_room(self):
         if (self.room_connected):
             # gather(*Task.all_tasks(self.event_loop)).cancel()
-            run_coroutine_threadsafe(self._leave_room(self._get_endpoint()), self.event_loop)
+            future = run_coroutine_threadsafe(self._leave_room(self._get_endpoint()), self.event_loop)
+            return future.result()
 
     # this function should instantiate the self.room variable with the room popyo.
     # perhaps make it varargs so we can make it blocking if we want to???
@@ -359,6 +359,11 @@ class connection:
 
                                     elif msg.type == popyo.Message_Type.system:
                                         await self._update_room_state(self._get_endpoint(), preserve_banned=True)
+
+                                    elif msg.type == popyo.Message_Type.room_profile or \
+                                                    msg.type == popyo.Message_Type.new_description:
+                                        await self._update_room_state(self._get_endpoint(), preserve_banned=True)
+                                        await self.msg_cb(self.event_loop, self.id, msg)
 
                                     elif msg.type == popyo.Message_Type.error:
                                         # might be the spurious bug , fetch again and check if it isn't error
@@ -618,5 +623,44 @@ class connection:
             run_coroutine_threadsafe(self._set_dj_mode(self._get_endpoint(), is_dj_mode), self.event_loop)
         else:
             self.logger.warning("Not Connected!")
+
+
+
+    async def _set_room_name(self, endpoint, name):
+        for i in range(0, self.networking_config['http_failure_retries']):
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                             data={'room_name': str(name)}) as resp:
+                    if resp.status == 200:
+                        pass
+                    return
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def set_room_name(self, name):
+        if self.room_connected:
+            run_coroutine_threadsafe(self._set_room_name(self._get_endpoint(), name), self.event_loop)
+        else:
+            self.logger.warning("Not Connected!")
+
+    async def _set_room_desc(self, endpoint, name):
+        for i in range(0, self.networking_config['http_failure_retries']):
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                         data={'room_description': str(name)}) as resp:
+                    if resp.status == 200:
+                        pass
+                    return
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def set_room_desc(self, name):
+        if self.room_connected:
+            run_coroutine_threadsafe(self._set_room_desc(self._get_endpoint(), name), self.event_loop)
+        else:
+            self.logger.warning("Not Connected!")
+
     # get available rooms
     # def get_rooms(self):
