@@ -42,14 +42,14 @@ class Playlist(persistent.Persistent):
         self.song_count = song_count
         self.plugin = plugin
 
-    async def get_song_list_async(self):
+    async def get_song_list_async(self, plugin_instance):
         if self.song_list is None:
-            self.song_list = await self.plugin._get_playlist_songs_async(self.id)
+            self.song_list = await plugin_instance._get_playlist_songs_async(self.id)
         return self.song_list
 
-    def get_song_list(self):
+    def get_song_list(self, plugin_instance):
         if self.song_list is None:
-            self.song_list = self.plugin.get_playlist_songs(self.id)
+            self.song_list = plugin_instance.get_playlist_songs(self.id)
         return self.song_list
 
 
