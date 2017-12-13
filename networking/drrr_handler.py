@@ -243,7 +243,7 @@ class connection:
                         if 'roomId' in resp_parsed:
                             for user in resp_parsed['users']:
                                 users[user['id']] = popyo.User(user['id'], user['name'], user['icon'],
-                                                               user['tripcode'] if "tripcode" in user.keys() else None,
+                                                               user['tripcode'] if "tripcode" in user.keys() else None, user['device'],
                                                                True if 'admin' in user.keys() and user['admin'] else False)
 
                             banned_users = self.room.banned_users if preserve_banned else {}
