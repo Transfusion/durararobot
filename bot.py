@@ -101,21 +101,39 @@ class bot:
                 return
 
             if self._msg.type == popyo.Message_Type.dm:
-                self._bot.dm(self._conn, self._msg.sender.id, msg)
+                if isinstance(self._msg.sender, popyo.DiscordUser):
+                    self._bot.send(self._conn, msg)
+                else:
+                    self._bot.dm(self._conn, self._msg.sender.id, msg)
+
             else:
                 self._bot.send(self._conn, msg)
 
+        def reply_url(self, msg, url):
+            if isinstance(self._msg.sender, popyo.CLIUser):
+                self.debug_to_cli(msg + " url: " + url)
+                return
+
+            if self._msg.type == popyo.Message_Type.dm_url:
+                if isinstance(self._msg.sender, popyo.DiscordUser):
+                    self._bot.send_url(self._conn, msg, url)
+                else:
+                    self._bot.dm_url(self._conn, self._msg.sender.id, msg, url)
+
+            else:
+                self._bot.send_url(self._conn, msg, url)
+
         def dm(self, msg):
-            self._bot.dm(self._conn, self._msg.sender.id, msg)
+            if isinstance(self._msg.sender, popyo.DiscordUser):
+                self._bot.send(self._conn, msg)
+            else:
+                self._bot.dm(self._conn, self._msg.sender.id, msg)
 
         def am_host(self):
             return self._bot.conn[self._conn].room.host_id == self._bot.conn[self._conn].own_user.id
 
         def get_perms_mgr(self):
             return self._bot.perms_mgr
-
-        def reply_url(self, msg, url):
-            pass
 
         def get_conn(self):
             # return self._conn
@@ -148,6 +166,9 @@ class bot:
     def ban(self, conn, uid):
         self.conn[conn].ban(uid)
 
+    def unban(self, conn, uid):
+        self.conn[conn].unban(uid)
+
     def report_and_ban(self, conn, uid):
         self.conn[conn].report_and_ban(uid)
 
@@ -167,6 +188,7 @@ class bot:
 
     def terminate(self):
         # todo: gracefully disconnect etc.
+        self.module_mgr
         for _, v in self.conn.items():
             v.close()
 
@@ -258,14 +280,19 @@ class bot:
         self.perms_mgr.load_perms_block()
 
     def __init__(self, config_mgr):
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.DEBUG)
+
+        # set the global log-to-stdout first
+        l = logging.getLogger()
 
         ch = logging.StreamHandler()
         ch.setLevel(logging.DEBUG)
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
+        l.setLevel(logging.DEBUG)
+        l.addHandler(ch)
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
 
         # todo: check for cache.pkl
 
@@ -275,12 +302,15 @@ class bot:
         self.config_mgr = config_mgr
         self.perms_mgr = perms_mgr.perms_mgr(config_mgr)
 
-
+        # todo: place modules to load at start in the config
         self.module_mgr = module_mgr.module_mgr(config_mgr, 'modules')
-        self.module_mgr.load_module("TimeReporter", self)
-        self.module_mgr.load_module("Admin", self)
+        modules_to_load = ["TimeReporter", "Admin", "Config", "Music"]
+        for module in modules_to_load:
+            self.module_mgr.load_module(module, self, True)
+
+        # self.module_mgr.load_module("TestWaitFor", self)
+
         # self.module_mgr.load_module("DiscordBridge", self)
-        # self.module_mgr.load_module("Music", self)
 
         # time_reporter = getattr(importlib.import_module('modules.TimeReporter'), "TimeReporter")
         # print(time_reporter)
@@ -408,7 +438,7 @@ class BotCLI(Cmd):
         elif arg_split[0] == 'chan':
             m = popyo.utils.create_cli_message_chan(msg)
 
-
+        # create a temporary evt loop to execute the cmd
         loop = asyncio.new_event_loop()
         loop.run_until_complete(self.bot.handler(loop, conn_name, m))
         loop.close()
@@ -474,8 +504,7 @@ class BotCLI(Cmd):
             if isinstance(lvl, str):
                 print("invalid built in loglevel")
             else:
-                logging.disable(lvl)
-
+                logging.getLogger().setLevel(lvl)
 
 
 # admin plugin first, next!!! join other rooms, handover OP, say, etc.

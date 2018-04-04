@@ -2,12 +2,11 @@
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 from enum import Enum
-import persistent
 
 import time
 
 # perhaps subclass these (e.g. NetEaseSong..)
-class Song(persistent.Persistent):
+class Song:
     def __init__(self, name, artist, duration, id, plugin):
         self.name = name
         self.artist = artist
@@ -26,11 +25,11 @@ class Song(persistent.Persistent):
         return self.artist + "-" + self.name + " " + "%d:%02d" % (divmod(self.duration/1000, 60))
 
 # should correspond to an album in the particular plugin's context; some plugins (e.g. youtube) might not have an analog
-class Album():
+class Album:
     def __init__(self):
         pass
 
-class Playlist(persistent.Persistent):
+class Playlist:
     def __init__(self, name, creator_id, id, song_count, plugin):
         self.name = name
         self.creator_id = creator_id
@@ -116,4 +115,8 @@ class MusicPlugin(metaclass=ABCMeta):
 
     @abstractmethod
     def get_playlist_songs(self, playlist_id):
+        pass
+
+    @abstractmethod
+    def get_item_info_url(self, item):
         pass

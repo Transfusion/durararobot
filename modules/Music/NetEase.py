@@ -2,14 +2,13 @@
 
 import aiohttp
 import asyncio
-from .MusicPlugin import MusicPlugin, QueryState, Query_Type, Song, Playlist
+from .MusicPlugin import MusicPlugin, QueryState, Query_Type, Song, Playlist, Album
 from enum import Enum
 import logging
 import json
 import traceback
 import math
 from urllib.parse import urlsplit
-import dns.resolver
 import random
 
 class Search_Type(Enum):
@@ -20,6 +19,7 @@ class Search_Type(Enum):
 
 class NetEasePlugin(MusicPlugin):
     CONF_NETEASE_API_ENDPOINT_KEY = "ne_endpoint"
+    CONF_REVERSE_PROXIES = "ne_proxies"
 
     @staticmethod
     def name():
@@ -42,8 +42,8 @@ class NetEasePlugin(MusicPlugin):
                     for song in parsed_json['result']['songs']:
                         # self, name, artist, duration, id, plugin
                         entries.append(Song(song['name'], song['artists'][0]['name'],
-                                            song['duration'], song['id'], self))
-                qs = QueryState(kwd, Query_Type.song, limit, entries, page, pages, self)
+                                            song['duration'], song['id'], NetEasePlugin.name()))
+                qs = QueryState(kwd, Query_Type.song, limit, entries, page, pages,  NetEasePlugin.name())
 
                 return qs
 
@@ -74,8 +74,8 @@ class NetEasePlugin(MusicPlugin):
                     for playlist in parsed_json['result']['playlists']:
                         # (self, name, creator_id, id, song_count, plugin)
                         entries.append(Playlist(playlist['name'], playlist['creator']['userId'],
-                                                playlist['id'], playlist['trackCount'], self))
-                qs = QueryState(kwd, Query_Type.playlist, limit, entries, page, pages, self)
+                                                playlist['id'], playlist['trackCount'],  NetEasePlugin.name()))
+                qs = QueryState(kwd, Query_Type.playlist, limit, entries, page, pages,  NetEasePlugin.name())
                 return qs
 
         except Exception:
@@ -91,7 +91,8 @@ class NetEasePlugin(MusicPlugin):
     def _globalize_ne_url(self, url):
         domain = "{0.netloc}".format(urlsplit(url))
         scheme = "{0.scheme}".format(urlsplit(url))
-        ips = [data.address for data in dns.resolver.query(domain, "A")]
+        # ips = [data.address for data in dns.resolver.query(domain, "A")]
+        ips = self.conf[NetEasePlugin.CONF_REVERSE_PROXIES].split(",")
         ip = random.choice(ips)
         return scheme + "://" + str(ip) + "/" + url[len(scheme)+3:]
 
@@ -125,6 +126,9 @@ class NetEasePlugin(MusicPlugin):
         """ids is a list of song ids for this particular plugin. returns a list of urls in the same order"""
         pass
 
+    async def _get_album_songs_async(self, id):
+        pass
+
     def get_album_songs(self, album_id):
         pass
 
@@ -137,9 +141,9 @@ class NetEasePlugin(MusicPlugin):
                 parsed_json = json.loads(text)
                 # self.logger.debug(parsed_json)
                 entries = []
-                if "tracks" in parsed_json['playlist']:
-                    for item in parsed_json['playlist']['tracks']:
-                        entries.append(Song(item["name"], item["ar"][0]["name"], item["dt"], item["id"], self))
+                if "tracks" in parsed_json['result']:
+                    for item in parsed_json['result']['tracks']:
+                        entries.append(Song(item["name"], item["artists"][0]["name"], item["duration"], item["id"], self.name()))
                 return entries
 
         except Exception:
@@ -152,24 +156,29 @@ class NetEasePlugin(MusicPlugin):
         future = asyncio.run_coroutine_threadsafe(self._get_playlist_songs_async(playlist_id), self.loop)
         return future.result()
 
+    def get_item_info_url(self, item):
+        if type(item) is Song:
+            return "http://music.163.com/#/song?id=" + str(item.id)
+        elif type(item) is Playlist:
+            return "http://music.163.com/#/playlist?id=" + str(item.id)
+        elif type(item) is Album:
+            return "http://music.163.com/#/album?id=" + str(item.id)
 
     def __init__(self, loop, conf, save_config):
         self.logger = logging.getLogger(__name__)
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.addHandler(ch)
-
 
         # maintain a reference the function to write the config since we need it
         self.loop = loop
-        self.save_config = save_config()
+        self.save_config = save_config
         self.conf = conf
 
         self.http_client_session = aiohttp.ClientSession(loop=self.loop)
 
         if NetEasePlugin.CONF_NETEASE_API_ENDPOINT_KEY not in self.conf:
             self.conf[NetEasePlugin.CONF_NETEASE_API_ENDPOINT_KEY] = "127.0.0.1:3000"
+            self.save_config()
 
+        if NetEasePlugin.CONF_REVERSE_PROXIES not in self.conf:
+            # comma-separated
+            self.conf[NetEasePlugin.CONF_REVERSE_PROXIES] = "183.57.28.56,157.185.161.31"
+            self.save_config()

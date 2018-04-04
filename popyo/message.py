@@ -73,11 +73,12 @@ class RoomProfileMessage:
         self.type = Message_Type.room_profile
 
 class NewDescMessage:
-    def __init__(self, id, time, sender):
+    def __init__(self, id, time, sender, description):
         self.id = id
         self.time = time
         self.sender = sender
         self.type = Message_Type.new_description
+        self.description = description
         self.message = '{1} set the room topic: {2}'
 
 
@@ -106,7 +107,7 @@ class Message:
 
 class NewHostMessage(Message):
     def __init__(self, id, time, user):
-        super(NewHostMessage, self).__init__(id, time, Message_Type.new_host, user, "{1} is a new host.")
+        super(NewHostMessage, self).__init__(id, time, Message_Type.new_host, user, "{1} is the new host.")
 
 class JoinMessage(Message):
     def __init__(self, id, time, user):
@@ -135,7 +136,7 @@ class MusicMessage(URLMessage):
 # content is the action
 class MeMessage(Message):
     def __init__(self, id, time, sender, content):
-        super(MeMessage, self).__init__(id, time, Message_Type.me, sender, "{1} {2]")
+        super(MeMessage, self).__init__(id, time, Message_Type.me, sender, "{1} {2}")
         self.content = content
 
 

@@ -19,7 +19,23 @@ def require_god(message=None):
 
     return actual_decorator
 
+def not_discord(message=None):
+    """exits if the message is from discord"""
+    def actual_decorator(function):
+        @functools.wraps(function)
+        def _nop(*args, **kwargs):
+            wrapper, incoming_message = args[1], args[2]
+            if not isinstance(incoming_message.sender, popyo.DiscordUser):
+                return function(*args, **kwargs)
+            else:
+                wrapper.reply(message)
 
+        return _nop
+
+    if callable(message):
+        return actual_decorator(message)
+
+    return actual_decorator
 
 def not_cli(message=None):
     """exits if the message is from the CLI"""

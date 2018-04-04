@@ -11,13 +11,6 @@ import popyo
 class perms_mgr():
     def __init__(self, config_mgr):
         self.logger = logging.getLogger(__name__)
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.addHandler(ch)
-
 
         self.config_mgr = config_mgr
         self.load_perms_block()
@@ -45,9 +38,15 @@ class perms_mgr():
 
     # user is a user object
     def is_admin(self, user):
+        if isinstance(user, popyo.DiscordUser):
+            return user.bot_admin or self.is_god(user)
+
         return self.is_god(user) or (user.name, user.tripcode) in self.perms_block['admins']
 
     def is_god(self, user):
+        if isinstance(user, popyo.DiscordUser):
+            return user.bot_god
+
         return isinstance(user, popyo.CLIUser) or (user.name, user.tripcode) in self.perms_block['gods'] or user.drrr_admin
 
     def is_allowed(self, plugin_name, cmd_name, username, tripcode):

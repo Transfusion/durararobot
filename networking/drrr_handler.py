@@ -90,16 +90,16 @@ class connection:
     # todo: do we need to modify any parameters of this, networking_config should be a section of the config mgr
     def __init__(self, id, username, avatar, onjoin_cb, onleave_cb, msg_cb, networking_config):
         self.logger = logging.getLogger(__name__ + "." + id)
-        self.logger.setLevel(logging.DEBUG)
-        logging.getLogger('asyncio').setLevel(logging.DEBUG)
+        # self.logger.setLevel(logging.DEBUG)
+        # logging.getLogger('asyncio').setLevel(logging.DEBUG)
 
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        logging.getLogger('asyncio').addHandler(ch)
+        # ch = logging.StreamHandler()
+        # ch.setLevel(logging.DEBUG)
+        # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        # ch.setFormatter(formatter)
+        # logging.getLogger('asyncio').addHandler(ch)
 
-        self.logger.addHandler(ch)
+        # self.logger.addHandler(ch)
 
         self.id = id
         self.username = username
@@ -246,12 +246,24 @@ class connection:
                                                                user['tripcode'] if "tripcode" in user.keys() else None, user['device'],
                                                                True if 'admin' in user.keys() and user['admin'] else False)
 
-                            banned_users = self.room.banned_users if preserve_banned else {}
+                            # banned_users = self.room.banned_users if preserve_banned else {}
+                            banned_ids = self.room.banned_ids if preserve_banned else set()
                             # (self, name, desc, limit, users, lang, room_id, music, game, host_id):
-                            self.room = popyo.Room(resp_parsed['name'], resp_parsed['description'], resp_parsed['limit'], users, resp_parsed['language'],
-                                                   resp_parsed['roomId'], resp_parsed['music'], resp_parsed['djMode'], resp_parsed['gameRoom'],
-                                                   resp_parsed['host'], resp_parsed['update'])
-                            self.room.banned_users = banned_users
+                            self.room = popyo.Room(name=resp_parsed['name'], desc=resp_parsed['description'],
+                                                   limit=resp_parsed['limit'], users=users, lang=resp_parsed['language'],
+                                                   room_id=resp_parsed['roomId'], music=resp_parsed['music'],
+                                                   dj_mode=resp_parsed['djMode'] if resp_parsed['music'] else False,
+                                                   game=resp_parsed['gameRoom'],
+                                                   host_id=resp_parsed['host'], update=resp_parsed['update'])
+
+                            if 'np' in resp_parsed:
+                                self.room.music_np = resp_parsed['np']
+
+                            # self.room = popyo.Room(resp_parsed['name'], resp_parsed['description'], resp_parsed['limit'], users, resp_parsed['language'],
+                            #                        resp_parsed['roomId'], resp_parsed['music'], resp_parsed['djMode'], resp_parsed['gameRoom'],
+                            #                        resp_parsed['host'], resp_parsed['update'])
+                            # self.room.banned_users = banned_users
+                            self.room.banned_ids = banned_ids
 
 
                     return
@@ -317,12 +329,17 @@ class connection:
                     self.logger.debug(resp_parsed)
                     # if stat == 200 and 'error' not in resp_parsed and 'roomId' in resp_parsed:
                     if stat == 200:
+                        # TODO: update the room status first?
+
                         if 'talks' in resp_parsed:
                             try:
                                 msgs = popyo.talks_to_msgs(resp_parsed['talks'], self.room)
                                 for msg in msgs:
                                     if msg.type == popyo.Message_Type.join:
-                                        self.room.users[msg.sender.id] = msg.sender
+                                        # http://www.goodmami.org/2013/01/30/Getting-only-the-first-match-in-a-list-comprehension.html
+                                        # just update the entire room state for now..lol lazy
+                                        await self._update_room_state(self._get_endpoint(), preserve_banned=True)
+
                                     elif msg.type == popyo.Message_Type.leave:
                                         if msg.sender.id == self.own_user.id:
                                             # self.room_connected = False
@@ -335,6 +352,7 @@ class connection:
                                             del self.room.users[msg.sender.id]
                                     if msg.type == popyo.Message_Type.new_host:
                                         self.room.host_id = msg.sender.id
+                                        await self.msg_cb(self.event_loop, self.id, msg)
 
                                     elif msg.type == popyo.Message_Type.async_response:
                                         if msg.stop_fetching:
@@ -346,51 +364,78 @@ class connection:
                                             del self.room.users[msg.to.id]
                                             await self.msg_cb(self.event_loop, self.id, msg)
 
+                                    # warning: it is possible to unban users not in the room!!
                                     elif msg.type == popyo.Message_Type.ban:
-                                        if msg.to.id != self.own_user.id:
+                                        if isinstance(msg.to, str):
+                                            banned_id = msg.to
+                                        elif isinstance(msg.to, popyo.User):
+                                            banned_id = msg.to.id
+
+                                        if banned_id != self.own_user.id:
                                             # update the ban list in case we need to unban in the future
-                                            self.room.banned_users[msg.to.id] = self.room.users[msg.to.id]
-                                            del self.room.users[msg.to.id]
+                                            # self.room.banned_users[msg.to.id] = self.room.users[msg.to.id]
+                                            self.room.banned_ids.add(banned_id)
+                                            if banned_id in self.room.users:
+                                                del self.room.users[banned_id]
                                             await self.msg_cb(self.event_loop, self.id, msg)
 
                                     elif msg.type == popyo.Message_Type.unban:
-                                        del self.room.banned_users[msg.to.id]
+                                        # del self.room.banned_users[msg.to.id]
+                                        if msg.to.id in self.room.banned_ids:
+                                            self.room.banned_ids.remove(msg.to.id)
                                         await self.msg_cb(self.event_loop, self.id, msg)
 
                                     elif msg.type == popyo.Message_Type.system:
                                         await self._update_room_state(self._get_endpoint(), preserve_banned=True)
+                                        await self.msg_cb(self.event_loop, self.id, msg)
 
                                     elif msg.type == popyo.Message_Type.room_profile or \
                                                     msg.type == popyo.Message_Type.new_description:
                                         await self._update_room_state(self._get_endpoint(), preserve_banned=True)
                                         await self.msg_cb(self.event_loop, self.id, msg)
 
-                                    elif msg.type == popyo.Message_Type.error:
-                                        # might be the spurious bug , fetch again and check if it isn't error
-                                        if msg.reload and not self.last_error:
-                                            self.last_error = True
-                                            pass
+                                    elif msg.type == popyo.Message_Type.music:
+                                        self.room.music_np = resp_parsed['np']
 
-                                        else:
-                                            self.exit_loop = True
-                                            break
+                                        await self.msg_cb(self.event_loop, self.id, msg)
 
+                                    # elif msg.type == popyo.Message_Type.error:
+                                    #     # might be the spurious bug , fetch again and check if it isn't error
+                                    #     if not self.last_error:
+                                    #         self.last_error = True
+                                    #         pass
+                                    #     else:
+                                    #         self.exit_loop = True
+                                    #         break
+
+                                    # elif msg.type != popyo.Message_Type.kick and \
+                                    #                 msg.type != popyo.Message_Type.async_response and \
+                                    #                 msg.sender.id != self.own_user.id:
                                     elif msg.type != popyo.Message_Type.kick and \
-                                                    msg.type != popyo.Message_Type.async_response and \
-                                                    msg.sender.id != self.own_user.id:
+                                         msg.type != popyo.Message_Type.async_response:
                                         await self.msg_cb(self.event_loop, self.id, msg)
 
                                     self.last_error = False
 
-                                if self.exit_loop:
-                                    break
+                                # if self.exit_loop:
+                                #     break
 
                             except Exception as e:
                                 self.logger.error("deserializing failed!!!")
                                 self.logger.error(traceback.format_exc())
 
+                        elif 'error' in resp_parsed:
+                            if not self.last_error:
+                                self.last_error = True
+                                pass
+                            else:
+                                # self.exit_loop = True
+                                break
+
                         else:
                             self.logger.debug("idled successfully")
+                            self.last_error = False
+
                         self.room.update = resp_parsed['update']
                     else:
                         self.logger.debug("malformed message!")
@@ -584,6 +629,23 @@ class connection:
         else:
             self.logger.warning("Not Connected!")
 
+    async def _unban(self, endpoint, uid):
+        for i in range(0, self.networking_config['http_failure_retries']):
+            try:
+                async with self.http_client_session.post(endpoint + "/room/?ajax=1&api=json",
+                                                         data={'unban': uid}) as resp:
+                    if resp.status == 200:
+                        self.logger.debug("successfully unbanned " + uid)
+                    return
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                sleep(1)
+
+    def unban(self, uid):
+        if self.room_connected:
+            run_coroutine_threadsafe(self._unban(self._get_endpoint(), uid), self.event_loop)
+        else:
+            self.logger.warning("Not Connected!")
 
     async def _play_music(self, endpoint, name, url):
         for i in range(0, self.networking_config['http_failure_retries']):
