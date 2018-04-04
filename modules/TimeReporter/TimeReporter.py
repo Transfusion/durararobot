@@ -53,7 +53,7 @@ class TimeReporter(Module):
         asyncio.Task.current_task().name = conn_name
         while conn_name in self.repeating_tasks:
             self.bot.send(conn=conn_name, msg=datetime.utcnow().strftime(self.conf['time_format']))
-            await asyncio.sleep(self.conf[TimeReporter.CONF_REPORT_INTERVAL_KEY])
+            await asyncio.sleep(self.conf.as_float(TimeReporter.CONF_REPORT_INTERVAL_KEY), loop=self.get_event_loop(TimeReporter.KEY_EVT_LOOP))
 
     # need to start in another thread so that don't exhaust one of the threads of the ThreadPoolExecutor
     def start_loop(self, conn_name):

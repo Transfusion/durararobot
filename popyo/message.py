@@ -14,6 +14,9 @@ class Message_Type(Enum):
     kick = 10
     ban = 11
     unban = 12
+    system = 13
+    room_profile = 14
+    new_description = 15
 
 #     my own fields
     dm = 6
@@ -53,6 +56,32 @@ class UnbanMessage:
         self.message = message
         self.type = Message_Type.unban
 
+class SystemMessage:
+    def __init__(self, id, time, message):
+        self.id = id
+        self.time = time
+        self.message = message
+        self.type = Message_Type.system
+
+class RoomProfileMessage:
+    def __init__(self, id, time, sender):
+        self.id = id
+        self.time = time
+        # There is no sender field in the actual json
+        self.sender = sender
+        self.message = ""
+        self.type = Message_Type.room_profile
+
+class NewDescMessage:
+    def __init__(self, id, time, sender, description):
+        self.id = id
+        self.time = time
+        self.sender = sender
+        self.type = Message_Type.new_description
+        self.description = description
+        self.message = '{1} set the room topic: {2}'
+
+
 # usually in response to events like getting kicked, unable to play music, etc
 # todo: check whether the stop_fetching field is always present
 class AsyncResponse:
@@ -78,7 +107,7 @@ class Message:
 
 class NewHostMessage(Message):
     def __init__(self, id, time, user):
-        super(NewHostMessage, self).__init__(id, time, Message_Type.new_host, user, "{1} is a new host.")
+        super(NewHostMessage, self).__init__(id, time, Message_Type.new_host, user, "{1} is the new host.")
 
 class JoinMessage(Message):
     def __init__(self, id, time, user):
@@ -107,7 +136,7 @@ class MusicMessage(URLMessage):
 # content is the action
 class MeMessage(Message):
     def __init__(self, id, time, sender, content):
-        super(MeMessage, self).__init__(id, time, Message_Type.me, sender, "{1} {2]")
+        super(MeMessage, self).__init__(id, time, Message_Type.me, sender, "{1} {2}")
         self.content = content
 
 

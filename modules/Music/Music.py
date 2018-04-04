@@ -1,135 +1,124 @@
-"""The motivation behind this bot, also an example of how I plan to store persistent data"""
+"""The motivation behind this bot"""
+
+# TODO: rejoining a connection but the room is now in DJ mode or otherwise
+# TODO: room changes to DJ mode in the middle of a song and bot is not the DJ
+# TODO: check if DJ mode or music simply not enabled.
 
 from modules.module import Module
+
 from popyo import *
 import asyncio
 import threading
-import argparse
 import re
-import shlex
+import os
+
 import traceback
+import shelve
+
 from decorators import *
-import ZODB, ZODB.FileStorage
+
 
 from .NetEase import NetEasePlugin
+from .YouTube import YouTubePlugin
+from .SoundCloud import SoundCloudPlugin
+
 from .MusicPlugin import *
 
+from .MusicPlayer import *
+
+
 class Music(Module):
-    CONF_RESUME_AFTER_INTERRUPTED_KEY = "resume_after_interrupted"
-    CONF_SEARCH_RESULTS_LIMIT = "res_limit"
-    CONF_PLAYLIST_CACHE_FILE_KEY = "playlist_cache"
-    CONF_RESPOND_IN_ROOM = "public_respond"
-
-    circled_numbers_array = ['⓪','①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩',
-                             '⑪','⑫','⑬','⑭','⑮','⑯','⑰','⑱','⑲','⑳']
-
-    # dict of conn_name to user id to last search progress, so people can navigate through menus easily
-    # could be problematic, someone with the same user and tripcode in different channels searching for the same song..
-    query_state = None
-
-    # I did consider using a queue, but I want to do things like shuffling a list of objects and deleting randomly
-    # Idea: instead of waiting on queue.get wait on a semaphore that reflects the number of items in the list
-    # should be a dict of conn name to "semaphore", "list"
-    music_queue = None
-
-    # should be a dict of conn name to "now_playing", "music_loop_future"
-    now_playing_info = None
-    def unload(self):
-        pass
-
-    def onjoin(self, conn_name, scrollback):
-        # self.music_queue[conn_name] = asyncio.Queue()
-        # self.bot.send(conn_name, "i joined")
-        self.music_queue[conn_name] = {}
-        # self.music_queue[conn_name]['semaphore'] = asyncio.BoundedSemaphore(value=0,loop=self.event_loop)
-        self.music_queue[conn_name]['semaphore'] = asyncio.Event(loop=self.event_loop)
-        self.music_queue[conn_name]['q'] = []
-
-        self.now_playing_info =  {}
-        self.now_playing_info[conn_name] = {}
-        self.now_playing_info[conn_name]['now_playing'] = None
-        self.now_playing_info[conn_name]['music_loop_future'] = None
-        self.now_playing_info[conn_name]['sleep_task'] = None
-
-    # todo: fix this shit!for
-    def onleave(self, conn_name):
-        pass
-
-    def argparser(self):
-        pass
 
     @staticmethod
     def name():
         return "Music"
 
+    CONF_RESUME_AFTER_INTERRUPTED_KEY = "resume_after_interrupted"
+    CONF_SEARCH_RESULTS_LIMIT = "res_limit"
+    CONF_PLAYLIST_CACHE_FILE_KEY = "playlist_cache"
+    CONF_RESPOND_IN_ROOM = "public_respond"
+    CONF_IDLE_SHUFFLE_KEY = "idle_shuffle"
 
-    # command format: !neq s some song name (netease query, search for songs, song name)
-    # def _process_search(self, conn_name, message, provider):
-    #     # strip !neq[space]
-    #     args = message.message[5:]
-    #     self.logger.debug(args)
-    #     try:
-    #         parsed_args = self.search_argparser.parse_args(shlex.split(args))
-    #         if provider == NetEasePlugin.name():
-    #             if parsed_args.type == 's':
-    #                 results = self.ne_plugin.search(parsed_args.name, 1 if parsed_args.page is None else parsed_args.page,
-    #                                       self.conf[Music.CONF_SEARCH_RESULTS_LIMIT])
-    #                 if results is not None:
-    #                     self.bot.send(conn_name, '\n'.join([str(idx) + ': ' + x.get_short_string() for idx, x in enumerate(results.entries)]))
-    #
-    #     except Exception as e:
-    #         self.logger.error(traceback.format_exc())
-    #         s = "Failed to parse arguments"
-    #         if message.type == Message_Type.message:
-    #             self.bot.send(conn_name, s)
-    #         else:
-    #             self.bot.dm(conn_name, message.sender.id, s)
+    # loop that plays the music and sleeps for the calculated time, and http
+    KEY_EVT_LOOP = "loop"
+
+    circled_numbers_array = ['⓪','①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩',
+                             '⑪','⑫','⑬','⑭','⑮','⑯','⑰','⑱','⑲','⑳']
+
+
+    def unload(self):
+        pass
+
+    def onjoin(self, conn_name, scrollback):
+        music_loop = self.get_event_loop(Music.KEY_EVT_LOOP)
+        self.music_players[conn_name] = MusicPlayer(music_loop, conn_name,
+                                                    self, MusicQueueManager(music_loop, self._get_plugin))
+        self.query_state[conn_name] = {}
+
+    def onleave(self, conn_name):
+        del self.query_state[conn_name]
+        # that's why you modularize your code kids
+        self._get_music_player(conn_name).stop_play_loop()
 
 
     # command format: !neq [s,p,a] song name [-p 1]
     # just use regex, it's easier...
     @conditional_dm("Use this cmd in DM because it is noisy")
     def _process_search(self, wrapper, message, provider, conn_name, dm):
-        if provider == NetEasePlugin.name():
+        if provider == NetEasePlugin.name() or provider == SoundCloudPlugin.name():
             begin_idx = 5
-            available_methods = ['s', 'p']
+            # available_methods = ['s', 'p']
             pagination_regex = re.compile(r"-p \d+")
 
-        stripped_msg = message.message[begin_idx:]
-    #     do all the validation in one block
-        if stripped_msg[0] in available_methods and stripped_msg[1] == ' ':
-            method = stripped_msg[0]
-            stripped_msg = stripped_msg[2:]
-            pagi = pagination_regex.search(stripped_msg)
-            if pagi is not None:
-                page = int(stripped_msg[pagi.span()[0]: pagi.span()[1]].split()[1])
-                stripped_msg = stripped_msg[:pagi.span()[0]]
-            else: page = 1
-            if method == 's':
-                results = self.ne_plugin.search(stripped_msg, page,
-                                                      self.conf[Music.CONF_SEARCH_RESULTS_LIMIT])
-                s = '\n'.join(
-                    [Music.circled_numbers_array[idx] + x.get_short_string() for idx, x in enumerate(results.entries)])
-            elif method == 'p':
-                results = self.ne_plugin.search_playlist(stripped_msg, page,
-                                                self.conf[Music.CONF_SEARCH_RESULTS_LIMIT])
-                s = '\n'.join(
-                    [Music.circled_numbers_array[idx] + x.get_short_string() for idx, x in enumerate(results.entries)])
-            # cache the results so people can do !munext
-            if conn_name not in self.query_state:
-                self.query_state[conn_name] = {}
-            self.query_state[conn_name][message.sender.id] = results
+        elif provider == YouTubePlugin.name():
+            begin_idx = 5
+            # available_methods = ['s', 'p']
+            # disable pagination/match nothing
+            pagination_regex = re.compile(r"a^")
 
+        stripped_msg = message.message[begin_idx:]
+
+        method = stripped_msg[0]
+        stripped_msg = stripped_msg[2:]
+        pagi = pagination_regex.search(stripped_msg)
+
+        if pagi is not None:
+            page = int(stripped_msg[pagi.span()[0]: pagi.span()[1]].split()[1])
+            stripped_msg = stripped_msg[:pagi.span()[0]]
+        else:
+            page = 1
+
+        if method == 's':
+            results = self.plugins[provider].search(stripped_msg, page,
+                                                    self.conf[Music.CONF_SEARCH_RESULTS_LIMIT])
             if results is not None:
+                self.query_state[conn_name][message.sender.id] = results
+
+                s = '\n'.join(
+                    [Music.circled_numbers_array[idx] + x.get_short_string() for idx, x in
+                     enumerate(results.entries)])
+                s += '\n' + str(results.page) + "/" + str(results.pages)
+
+                wrapper.reply(s)
+                return
+
+        elif method == 'p':
+            results = self.plugins[provider].search_playlist(stripped_msg, page,
+                                                             self.conf[Music.CONF_SEARCH_RESULTS_LIMIT])
+            if results is not None:
+
+                self.query_state[conn_name][message.sender.id] = results
+
+                s = '\n'.join(
+                    [Music.circled_numbers_array[idx] + x.get_short_string() for idx, x in
+                     enumerate(results.entries)])
                 s += '\n' + str(results.page) + "/" + str(results.pages)
                 wrapper.reply(s)
-
-
-        else:
-            wrapper.reply("Available Methods: " + str(available_methods))
-
+            else:
+                wrapper.reply("No search results.")
 
     # TODO: populate the query state dict in onjoin
+    # TODO: merge next and prev page into one method lol
     # There are known bugs with certain music APIs so we don't bother if the user requests a page no beyond total pages
     # e.g. angela aki this love in NetEase song
     @conditional_dm("Use this cmd in DM because it is noisy")
@@ -137,11 +126,25 @@ class Music(Module):
         if conn_name in self.query_state and message.sender.id in self.query_state[conn_name]:
             qs = self.query_state[conn_name][message.sender.id]
             if qs.type == Query_Type.song:
-                if type(qs.plugin) is NetEasePlugin:
-                    qs_new = self.ne_plugin.search(qs.kwd, qs.page + 1, qs.limit)
+                if qs.plugin == NetEasePlugin.name():
+                    qs_new = self.plugins[qs.plugin].search(qs.kwd, qs.page + 1, qs.limit)
+
+                elif qs.plugin == YouTubePlugin.name() and qs.next_pg_token is not None:
+                    qs_new = self.plugins[qs.plugin].search(qs.kwd, qs.next_pg_token, qs.limit)
+                    qs_new.cur_pg_token = qs_new.page
+                    qs_new.page = qs.page + 1
+
+                elif qs.plugin == SoundCloudPlugin.name():
+                    qs_new = self.plugins[qs.plugin].search(qs.kwd, qs.page + 1, qs.limit)
+
             elif qs.type == Query_Type.playlist:
-                if type(qs.plugin) is NetEasePlugin:
-                    qs_new = self.ne_plugin.search_playlist(qs.kwd, qs.page + 1, qs.limit)
+                if qs.plugin == NetEasePlugin.name() or SoundCloudPlugin.name():
+                    qs_new = self.plugins[qs.plugin].search_playlist(qs.kwd, qs.page + 1, qs.limit)
+
+                elif qs.plugin == YouTubePlugin.name() and qs.next_pg_token is not None:
+                    qs_new = self.plugins[qs.plugin].search_playlist(qs.kwd, qs.next_pg_token, qs.limit)
+                    qs_new.cur_pg_token = qs_new.page
+                    qs_new.page = qs.page + 1
 
             self.logger.debug(type(qs.plugin))
             if qs_new is not None:
@@ -162,11 +165,26 @@ class Music(Module):
                 qs_new = qs
             else:
                 if qs.type == Query_Type.song:
-                    if type(qs.plugin) is NetEasePlugin:
-                        qs_new = self.ne_plugin.search(qs.kwd, qs.page - 1, qs.limit)
+                    if qs.plugin == NetEasePlugin.name():
+                        qs_new = self.plugins[qs.plugin].search(qs.kwd, qs.page - 1, qs.limit)
+
+
+                    elif qs.plugin == YouTubePlugin.name() and qs.prev_pg_token is not None:
+                        qs_new = self.plugins[qs.plugin].search(qs.kwd, qs.prev_pg_token, qs.limit)
+                        qs_new.cur_pg_token = qs_new.page
+                        qs_new.page = qs.page - 1
+
+                    elif qs.plugin == SoundCloudPlugin.name():
+                        qs_new = self.plugins[qs.plugin].search(qs.kwd, qs.page - 1, qs.limit)
+
                 elif qs.type == Query_Type.playlist:
-                    if type(qs.plugin) is NetEasePlugin:
-                        qs_new = self.ne_plugin.search_playlist(qs.kwd, qs.page - 1, qs.limit)
+                    if qs.plugin == NetEasePlugin.name() or SoundCloudPlugin.name():
+                        qs_new = self.plugins[qs.plugin].search_playlist(qs.kwd, qs.page - 1, qs.limit)
+
+                    elif qs.plugin == YouTubePlugin.name() and qs.prev_pg_token is not None:
+                        qs_new = self.plugins[qs.plugin].search_playlist(qs.kwd, qs.prev_pg_token, qs.limit)
+                        qs_new.cur_pg_token = qs_new.page
+                        qs_new.page = qs.page - 1
 
                 if qs_new is not None:
                     self.query_state[conn_name][message.sender.id] = qs_new
@@ -178,205 +196,231 @@ class Music(Module):
         else:
             wrapper.reply("Search for some music first.")
 
-    async def _add_item_to_queue(self, item, conn_name):
-        self.music_queue[conn_name]['q'].append(item)
-        self.music_queue[conn_name]['semaphore'].set()
-
-    # could play either songs or playlists..
-    # !play [0-9]
-    # TODO: debug race condition encountered here
-    @conditional_dm("Use this cmd in DM because it is noisy")
-    def _process_play(self, wrapper, message, conn_name, dm):
-        try:
-            if conn_name in self.query_state and message.sender.id in self.query_state[conn_name]:
-                qs = self.query_state[conn_name][message.sender.id]
-                stripped_msg = message.message[6:]
-                if stripped_msg.isdigit() and int(stripped_msg) <= qs.limit:
-                    asyncio.run_coroutine_threadsafe(self._add_item_to_queue(qs.entries[int(stripped_msg)], conn_name), self.event_loop)
-                    wrapper.dm("Added " + qs.entries[int(stripped_msg)].name + " to queue.")
-
-            else:
-                wrapper.reply("Search for some music first.")
-        except Exception:
-            self.logger.error(traceback.format_exc())
-
-    @conditional_dm("Use this cmd in DM because it is noisy")
-    def _process_queue_info(self, wrapper, message, conn_name, dm):
-        # for item in self.music_queue[conn_name]['q']:
-
-        if not self.music_queue[conn_name]['q']:
-            s = "Queue is empty."
-        else:
-            s = ""
-            for item in self.music_queue[conn_name]['q']:
-                if type(item) is Playlist:
-                    s += "🅟 " + item.name + str(len(item.get_song_list())) + "/" + str(item.song_count)
-                elif type(item) is Song:
-                    s += "🅢 " + item.name
-                s += "\n"
-            # s = '\n'.join([item.name for item in self.music_queue[conn_name]['q']])
-        wrapper.reply(s)
-
-    # https://quentin.pradet.me/blog/how-do-you-limit-memory-usage-with-asyncio.html
-    # https://stackoverflow.com/questions/37209864/interrupt-all-asyncio-sleep-currently-executing
-    async def _music_loop(self, conn_name):
-        while conn_name in self.playing_music:
-            try:
-                self.now_playing_info[conn_name]['now_playing'] = None
-                self.now_playing_info[conn_name]['sleep_task'] = None
-                await self.music_queue[conn_name]['semaphore'].wait()
-
-                item = self.music_queue[conn_name]['q'][0]
-                if type(item) is Song:
-                    item = self.music_queue[conn_name]['q'].pop(0)
-                    url_dict = await item.plugin._get_song_urls_async([item.id])
-
-                    if item.id not in url_dict:
-                        self.bot.send(conn_name, "Unable to play " + item.name)
-                    else:
-                        self.now_playing_info[conn_name]['now_playing'] = item
-                        self.bot.play_music(conn_name, item.name + "-" + item.artist, url_dict[item.id])
-                        self.logger.debug("playing " + url_dict[item.id] + " in " + conn_name)
-                        self.now_playing_info[conn_name]['sleep_task'] = asyncio.ensure_future(asyncio.sleep(float(item.duration)/1000))
-                        try:
-                            await self.now_playing_info[conn_name]['sleep_task']
-                        except asyncio.CancelledError:
-                            self.now_playing_info[conn_name]['sleep_task'] = None
-                            self.bot.action(conn_name, "Skipping current song.")
-
-                    # self.bot.play_music(conn_name, item.name + "-" + item.artist, item.plugin.get_song_url(item.id))
-                elif type(item) is Playlist:
-            #         pop only if there are no more songs left in playlist.get_songs_list
-                    sg_list = await item.get_song_list_async()
-                    self.logger.debug(sg_list)
-                    if sg_list == []:
-                        self.music_queue[conn_name]['q'].pop(0)
-
-                    else:
-                        song = sg_list.pop()
-
-                        url_dict = await item.plugin._get_song_urls_async([song.id])
-                        if song.id not in url_dict:
-                            self.bot.send(conn_name, "Unable to play " + song.name)
-                        else:
-                            self.now_playing_info[conn_name]['now_playing'] = item
-                            self.bot.play_music(conn_name, song.name + "-" + song.artist, url_dict[song.id])
-                            self.now_playing_info[conn_name]['sleep_task'] = asyncio.ensure_future(
-                                asyncio.sleep(float(song.duration) / 1000))
-                            try:
-                                await self.now_playing_info[conn_name]['sleep_task']
-                            except asyncio.CancelledError:
-                                self.now_playing_info[conn_name]['sleep_task'] = None
-                                self.bot.action(conn_name, "Skipping current song.")
-                if self.music_queue[conn_name]['q'] != []:
-                    self.music_queue[conn_name]['semaphore'].set()
-                else:
-                    self.music_queue[conn_name]['semaphore'].clear()
-
-
-            except asyncio.CancelledError:
-                self.bot.action(conn_name, "Letting others take the stage. !mustart to resume")
-                self.now_playing_info[conn_name]['music_loop_future'] = None
-                self.now_playing_info[conn_name]['now_playing'] = None
-                break
-            except Exception:
-                self.logger.error(traceback.format_exc())
-
-
     def _start_music_loop(self, wrapper, message, conn_name):
-        if (conn_name in self.playing_music):
-            wrapper.reply("Already DJing.")
+        if self._get_music_player(conn_name).player_state == MusicPlayer.PlayerState.STOPPED:
+            self._get_music_player(conn_name).start_play_loop()
         else:
-            self.playing_music.add(conn_name)
-            self.now_playing_info[conn_name]['music_loop_future'] = asyncio.run_coroutine_threadsafe(self._music_loop(conn_name), self.event_loop)
-            self.bot.action(conn_name, "🎧💿 DJ in the house.")
-
-    async def _cancel_music_loop_future(self, conn_name):
-        self.logger.debug(self.now_playing_info[conn_name]['music_loop_future'])
-        if self.now_playing_info[conn_name]['music_loop_future'] is not None:
-            self.now_playing_info[conn_name]['music_loop_future'].cancel()
-            return True
-        return False
+            wrapper.reply("Music is already playing.")
 
     def _stop_music_loop(self, wrapper, message, conn_name):
-        future = asyncio.run_coroutine_threadsafe(self._cancel_music_loop_future(conn_name), self.event_loop)
-        if not future.result():
-            wrapper.reply("Not DJing.")
+        if self._get_music_player(conn_name).player_state != MusicPlayer.PlayerState.STOPPED:
+            self._get_music_player(conn_name).stop_play_loop()
+            wrapper.reply("Stopped.")
+            self.logger.debug(self._get_music_player(conn_name).player_state)
+        else:
+            wrapper.reply("Music is not playing.")
+
+    @conditional_dm("Use this cmd in DM because it is noisy")
+    def _process_play(self, wrapper, message, conn_name, dm):
+        # try:
+        if conn_name in self.query_state and message.sender.id in self.query_state[conn_name]:
+            qs = self.query_state[conn_name][message.sender.id]
+            stripped_msg = message.message[6:]
+
+            if stripped_msg.isdigit() and int(stripped_msg) < qs.limit:
+                if qs.type == Query_Type.playlist:
+                    # preload the songs list so muqueue works
+                    qs.entries[int(stripped_msg)].get_song_list(self.plugins[qs.plugin])
+                self._get_music_player(conn_name).add_to_queue(qs.entries[int(stripped_msg)])
+                wrapper.dm("Added " + qs.entries[int(stripped_msg)].name + " to queue.")
+        else:
+            wrapper.reply("Search for some music first.")
+        # except Exception:
+        #     self.logger.error(traceback.format_exc())
+
+    @conditional_dm("Use this cmd in DM because it is noisy")
+    def _process_remove(self, wrapper, message, conn_name, dm):
+        mplayer = self._get_music_player(conn_name)
+        split = message.message.split()
+        idx = split[-1]
+        if idx.isdigit() and int(idx) < len(mplayer.music_queue_mgr.get_q()):
+            if mplayer.music_queue_mgr.remove_q_item(int(idx)):
+                self.bot.action(conn_name, "Removed item " + str(idx) + " from queue.")
+
 
     @conditional_dm("Use this cmd in DM because it is noisy")
     def _process_now_playing(self, wrapper, message, conn_name, dm):
-        if self.now_playing_info[conn_name] is not None:
-            wrapper.reply(self.now_playing_info[conn_name].get_short_string())
-
-    async def _cancel_sleep_task(self, conn_name):
-        if self.now_playing_info[conn_name]['sleep_task'] is not None:
-            self.now_playing_info[conn_name]['sleep_task'].cancel()
-            return True
+        mplayer = self._get_music_player(conn_name)
+        if mplayer.player_state != MusicPlayer.PlayerState.PLAYING_WAIT:
+            wrapper.reply("No song is playing.")
         else:
-            return False
+            m, sec = divmod(mplayer.now_playing_song.progress, 60)
+            d_m, d_sec = divmod( float(mplayer.now_playing_song.duration)/1000, 60)
+            s = ""
+            s += mplayer.now_playing_song.plugin + " "
+            s += mplayer.now_playing_song.artist + "-" + mplayer.now_playing_song.name + "\n"
+            prog = "%d:%d/%d:%d" % (m,sec,d_m,d_sec)
+            s += prog
+            url = self._get_plugin(mplayer.now_playing_song.plugin).get_item_info_url(mplayer.now_playing_song)
+            wrapper.reply_url(s, url)
 
+    @conditional_dm("Use this cmd in DM because it is noisy")
+    def _process_queue_info(self, wrapper, message, conn_name, dm):
+        mplayer = self._get_music_player(conn_name)
+        if mplayer.music_queue_mgr.isEmpty():
+            s = "Queue is empty."
+        else:
+            s = ""
+            for idx, item in enumerate(mplayer.music_queue_mgr.get_q()):
+                if type(item) is Playlist:
+                    plugin = self.plugins[item.plugin]
+
+                    s += str(idx) +": 🅟 " + item.name + str(len(item.get_song_list(plugin))) + "/" + str(item.song_count)
+                elif type(item) is Song:
+                    s += str(idx)+": 🅢 " + item.name
+                s += "\n"
+
+        # The queue could be very long, and we want users to be able to remove.
+        wrapper.dm(s)
+
+    @conditional_dm("Use this cmd in DM because it is noisy")
+    def _process_item_info(self, wrapper, message, conn_name, dm):
+
+        try:
+            queue = self._get_music_player(conn_name).music_queue_mgr.get_q()
+            split = message.message.split()
+            idx = split[-1]
+            s = ""
+            if idx.isdigit() and int(idx) < len(queue):
+                item = queue[int(idx)]
+                if type(item) is Song:
+                    url = self._get_plugin(item.plugin).get_item_info_url(item)
+                    s += ("%s-%s" % (item.artist, item.name))
+                    minutes, seconds = divmod( float(item.duration)/1000, 60)
+                    s += " %d:%d" % (minutes, seconds)
+                    wrapper.reply_url(s, url)
+
+                elif type(item) is Playlist:
+                    url = self._get_plugin(item.plugin).get_item_info_url(item)
+                    s += "%s %d" % (item.name, item.song_count)
+                    wrapper.reply_url(s, url)
+
+        except Exception:
+            self.logger.error(traceback.format_exc())
+
+
+    def _process_clear(self, wrapper, message, conn_name):
+        self._get_music_player(conn_name).music_queue_mgr.clear_q()
+        wrapper.reply('Queue cleared.')
+
+    # !muskip 10 -p
     def _process_skip(self, wrapper, message, conn_name):
-        future = asyncio.run_coroutine_threadsafe(self._cancel_sleep_task(conn_name), self.event_loop)
-        if not future.result():
-            wrapper.reply("DJ is not playing any song.")
+        number_regex = re.compile(r"\d+")
+        skip_amt = number_regex.search(message.message)
+        # if there is a number...
+        if skip_amt is not None:
+            skip_amt = int(skip_amt.group())
+        else:
+            skip_amt = 0
 
+        mplayer = self._get_music_player(conn_name)
+        if mplayer.player_state == MusicPlayer.PlayerState.PLAYING_WAIT:
+            if "-p" in message.message:
+                mplayer.skip_items(items_to_skip=skip_amt)
+            else:
+                mplayer.skip_song(songs_to_skip=skip_amt)
+        else:
+            wrapper.reply("Not currently playing a song.")
+
+    def _process_shuffle(self, wrapper, message, conn_name):
+        if message.message == "!shuffle all":
+            self._get_music_player(conn_name).play_mode = MusicPlayer.PlayMode.SHUFFLE_ALL
+            self.bot.action(conn_name, "Shuffling.")
+        elif message.message == "!shuffle repeat":
+            self._get_music_player(conn_name).play_mode = MusicPlayer.PlayMode.SHUFFLE_REPEAT
+            self.bot.action(conn_name, "Shuffling in repeat.")
+
+    def _process_repeat(self, wrapper, message, conn_name):
+        mplayer = self._get_music_player(conn_name)
+        if message.message == "!repeat single":
+            if mplayer.player_state != MusicPlayer.PlayerState.PLAYING_WAIT:
+                wrapper.reply("Not currently playing a song")
+            else:
+            #     add the currently playing song back into the queue if in one of the popping play modes
+                if mplayer.play_mode == MusicPlayer.PlayMode.SHUFFLE_ALL or mplayer.play_mode == MusicPlayer.PlayMode.REGULAR:
+                    mplayer.add_to_queue(mplayer.now_playing_song)
+                mplayer.play_mode = MusicPlayer.PlayMode.REPEAT_SINGLE
+                self.bot.action(conn_name, "Repeating this song.")
+
+        elif message.message == "!repeat all":
+            # TODO: handle repeat all cmd
+            pass
+
+    def _process_regular(self, wrapper, message, conn_name):
+        self._get_music_player(conn_name).play_mode = MusicPlayer.PlayMode.REGULAR
+        self.bot.action(conn_name, "Playing normally.")
+
+    @staticmethod
+    def check_cmd(cmd_string):
+        return Module.CMD_VALID
 
     def handler(self, conn_name, message):
-        # self.bot.send(conn=conn_name, msg="Received a Message!")
-        # if self.conf[Music.CONF_RESPOND_IN_ROOM] and message.type == Message_Type.message \
-        #         or message.type == Message_Type.dm:
         if message.message.startswith("!neq "):
                 # self._process_search(conn_name, message, NetEasePlugin.name())
             self._process_search(self.bot.get_wrapper(conn_name, message), message, NetEasePlugin.name(),
                                  conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
+        if message.message.startswith("!ytq "):
+            self._process_search(self.bot.get_wrapper(conn_name, message), message, YouTubePlugin.name(),
+                                 conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
+
+        if message.message.startswith("!scq "):
+            self._process_search(self.bot.get_wrapper(conn_name, message), message, SoundCloudPlugin.name(),
+                                 conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
+
         if message.message == "!munext":
             self._process_next_page(self.bot.get_wrapper(conn_name, message), message, conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
         if message.message == "!muprev":
             self._process_prev_page(self.bot.get_wrapper(conn_name, message), message, conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
+
         if message.message.startswith("!play "):
             self._process_play(self.bot.get_wrapper(conn_name, message), message, conn_name,
                                     not self.conf[Music.CONF_RESPOND_IN_ROOM])
+
+        # now playing
+        if message.message == "!np":
+            self._process_now_playing(self.bot.get_wrapper(conn_name, message), message, conn_name,
+                                    not self.conf[Music.CONF_RESPOND_IN_ROOM])
+
+        if message.message.startswith("!shuffle"):
+            self._process_shuffle(self.bot.get_wrapper(conn_name, message), message, conn_name)
+
+        if message.message.startswith("!regular"):
+            self._process_regular(self.bot.get_wrapper(conn_name, message), message, conn_name)
+
+        if message.message.startswith("!repeat"):
+            self._process_repeat(self.bot.get_wrapper(conn_name, message), message, conn_name)
+
+        if message.message.startswith("!remove"):
+            self._process_remove(self.bot.get_wrapper(conn_name, message), message, conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
+
         if message.message == "!mustart":
             self._start_music_loop(self.bot.get_wrapper(conn_name, message), message, conn_name)
         if message.message == "!mustop":
             self._stop_music_loop(self.bot.get_wrapper(conn_name, message), message, conn_name)
-        # if message.message == "!nowplaying":
-        #     self._process_now_playing(self.bot.get_wrapper(conn_name, message), message, conn_name,
-        #                              not self.conf[Music.CONF_RESPOND_IN_ROOM])
-        if message.message == "!muqueue":
+
+        if message.message == "!muqueue" or message.message == "!muq":
             self._process_queue_info(self.bot.get_wrapper(conn_name, message), message, conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
-        if message.message == "!muskip":
+
+        if message.message.startswith("!muskip"):
             self._process_skip(self.bot.get_wrapper(conn_name, message), message, conn_name)
 
         if message.message == "!muclear":
             self._process_clear(self.bot.get_wrapper(conn_name, message), message, conn_name)
 
-    # https://stackoverflow.com/questions/8878478/how-can-use-pythons-argparse-with-a-predefined-argument-string
-    # https://stackoverflow.com/questions/34256250/parsing-a-string-with-spaces-from-command-line-in-python/34256358#34256358
-    # If we want to avoid having to double quote song names with spaces in them
-    # quick and dirty method of parsing arguments...
-    # def _init_search_argparser(self):
-    #     self.search_argparser = argparse.ArgumentParser()
-    #     self.search_argparser.add_argument('type', choices=['s', 'p'], type=str)
-    #     self.search_argparser.add_argument('-n', '--name', type=str, required=True)
-    #     self.search_argparser.add_argument('-p', '--page', type=int)
+        if message.message.startswith("!muinfo"):
+            self._process_item_info(self.bot.get_wrapper(conn_name, message), message, conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
 
-    # event loop to do all our http queries on and song playlist waiting
-    def start_event_loop(self, loop):
-        asyncio.set_event_loop(loop)
-        loop.run_forever()
+
+
+    def _get_music_player(self, conn) -> MusicPlayer:
+        return self.music_players[conn]
+
+    def _get_plugin(self, plugin_name) -> MusicPlugin:
+        return self.plugins[plugin_name]
 
     def __init__(self, config_mgr, perms_mgr, bot):
         super(Music, self).__init__(config_mgr, perms_mgr, bot)
         self.logger = logging.getLogger(__name__)
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.addHandler(ch)
-
-        self.query_state = {}
 
         if Music.CONF_RESUME_AFTER_INTERRUPTED_KEY not in self.conf:
             self.conf[Music.CONF_RESUME_AFTER_INTERRUPTED_KEY] = True
@@ -385,20 +429,31 @@ class Music(Module):
             self.conf[Music.CONF_SEARCH_RESULTS_LIMIT] = 10
 
         if Music.CONF_PLAYLIST_CACHE_FILE_KEY not in self.conf:
-            self.conf[Music.CONF_PLAYLIST_CACHE_FILE_KEY] = "pl_cache.fs"
+            self.conf[Music.CONF_PLAYLIST_CACHE_FILE_KEY] = "idle_cache.fs"
 
         if Music.CONF_RESPOND_IN_ROOM not in self.conf:
             self.conf[Music.CONF_RESPOND_IN_ROOM] = True
 
+        if Music.CONF_IDLE_SHUFFLE_KEY not in self.conf:
+            self.conf[Music.CONF_IDLE_SHUFFLE_KEY] = True
+
         self.save_config()
 
-        # 1 event loop for all the searching and playing across different plugins, easier to manage
-        self.event_loop = asyncio.new_event_loop()
-        self.event_loop_thread = threading.Thread(target=self.start_event_loop, args=(self.event_loop,))
-        self.event_loop_thread.start()
+        self.get_new_event_loop(Music.KEY_EVT_LOOP)
 
-        self.ne_plugin = NetEasePlugin(self.event_loop, self.conf, self.save_config)
+        # map of music source name to the music plugin
+        self.plugins = {}
+        self.plugins[NetEasePlugin.name()] = NetEasePlugin(self.get_event_loop(Music.KEY_EVT_LOOP), self.conf,
+                                                           self.save_config)
+        # self.plugins[YouTubePlugin.name()] = YouTubePlugin(self.get_event_loop(Music.KEY_EVT_LOOP), self.conf,
+        #                                                    self.save_config)
 
-        # self._init_search_argparser()
-        self.music_queue = {}
-        self.playing_music = set()
+        self.plugins[SoundCloudPlugin.name()] = SoundCloudPlugin(self.get_event_loop(Music.KEY_EVT_LOOP), self.conf,
+                                                                 self.save_config)
+        # map of conn name to the music player
+        self.music_players = {}
+
+        # dict of conn_name to user id to last search progress, so people can navigate through menus easily
+        # could be problematic, someone with the same user and tripcode in different channels searching for the same song..
+        self.query_state = {}
+

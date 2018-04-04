@@ -16,12 +16,6 @@ class module_mgr:
     # assume that mods_dir is at the same level as this file
     def __init__(self, config_mgr, mods_dir):
         self.logger = logging.getLogger(__name__)
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.addHandler(ch)
 
         self.config_mgr = config_mgr
         self.mods_dir = mods_dir
@@ -29,8 +23,9 @@ class module_mgr:
 
     """returns a boolean depending on whether successfully loaded
     modules need to expose the same class as their name, and the class
-     must be a subclass of Module"""
-    def load_module(self, name, bot):
+     must be a subclass of Module
+     startup param is used to prevent calling onjoin"""
+    def load_module(self, name, bot, startup=False):
         importlib.invalidate_caches()
         if name in self.modules.keys():
             self.logger.error("module with same name already exists")
@@ -52,11 +47,16 @@ class module_mgr:
             return False
 
         self.modules[name] = cls(self.config_mgr, bot.perms_mgr, bot)
+        # TODO: Really think about whether we should call onjoin here... also handle the scrollback
+        if not startup:
+            for conn in bot.conn:
+                self.modules[name].onjoin(conn_name=conn, scrollback=None)
         # print(sys.modules)
 
     def unload_module(self, name):
         try:
             # each module should be responsible for stopping their own threads and cleaning up. This method should block
+            # https://stackoverflow.com/questions/437589/how-do-i-unload-reload-a-python-module
 
             self.modules[name].unload()
             self.modules[name].cancel_all_event_loops()
@@ -64,6 +64,10 @@ class module_mgr:
             del self.modules[name]
             del sys.modules[self.mods_dir + '.' + name]
             del sys.modules[self.mods_dir + '.' + name + '.' + name]
+            for mod in list(sys.modules.keys()):
+                if mod.startswith(self.mods_dir + '.' + name ):
+                    del sys.modules[mod]
+
         except KeyError:
             self.logger.error("module " + name + " not loaded")
         except Exception:
@@ -85,6 +89,9 @@ class module_mgr:
 
     def is_loaded(self, module_name):
         return module_name in self.modules
+
+    def gracefully_terminate(self):
+        pass
 
     def reload_cfg(self):
         for _, v in self.modules.items():

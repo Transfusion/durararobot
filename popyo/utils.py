@@ -13,7 +13,13 @@ def create_cli_message_dm(text):
     return DirectMessage('a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1', str(round(time.time(), 3)),
                          Message_Type.dm, CLIUser(), CLIUser(), text)
 
+def create_discord_message_chan(text, discord_user_instance):
+    return Message('b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1', str(round(time.time(), 3)), Message_Type.message, discord_user_instance,
+                   text)
 
+def create_discord_message_dm(text, discord_user_instance):
+    return DirectMessage('b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1', str(round(time.time(), 3)), Message_Type.dm, discord_user_instance,
+                         discord_user_instance, text)
 
 def talks_to_msgs(messages, room):
     """Converts the talks list into a list of messages, room is the room object"""
@@ -26,7 +32,13 @@ def talk_to_msg(msg, room):
 
     # self, id, time, type, sender, message):
 
-    if msg['type'] == 'message':
+    if 'error' in msg:
+        if 'reload' in msg:
+            m = ErrorMessage(msg['error'], msg['reload'])
+        else:
+            m = ErrorMessage(msg['error'])
+
+    elif msg['type'] == 'message':
         if 'url' in msg:
             if 'to' in msg:
                 # (self, id, time, type, sender, receiver, message, url)
@@ -73,15 +85,22 @@ def talk_to_msg(msg, room):
         m = KickMessage(msg['id'], msg['time'], room.users[msg['to']['id']], msg['message'])
 
     elif msg['type'] == 'ban':
-        m = BanMessage(msg['id'], msg['time'], room.users[msg['to']['id']], msg['message'])
+        target_id = msg['to']['id']
+        m = BanMessage(msg['id'], msg['time'], room.users[target_id] if target_id in room.users else target_id, msg['message'])
 
     elif msg['type'] == 'unban':
-        m = UnbanMessage(msg['id'], msg['time'], room.banned_users[msg['to']['id']], msg['message'])
+        # m = UnbanMessage(msg['id'], msg['time'], room.banned_users[msg['to']['id']], msg['message'])
+        m = UnbanMessage(msg['id'], msg['time'], BannedUserInfo(msg['to']['id'], msg['to']['name'],
+                                                                msg['to']['tripcode'] if 'tripcode' in msg['to'] else None, msg['to']['icon']), msg['message'])
+
+    elif msg['type'] == 'system':
+        m = SystemMessage(msg['id'], msg['time'], msg['message'])
 
 
-    elif 'error' in msg:
-        if 'reload' in msg:
-            m = ErrorMessage(msg['error'], msg['reload'])
-        else:
-            m = ErrorMessage(msg['error'])
+    elif msg['type'] == 'room-profile':
+        m = RoomProfileMessage(msg['id'], msg['time'], room.users[room.host_id])
+
+    elif msg['type'] == 'new-description':
+        m = NewDescMessage(msg['id'], msg['time'], room.users[msg['from']['id']], msg['description'])
+
     return m
