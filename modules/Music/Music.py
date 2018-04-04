@@ -19,7 +19,7 @@ from decorators import *
 
 
 from .NetEase import NetEasePlugin
-from .YouTube import YouTubePlugin
+# from .YouTube import YouTubePlugin
 from .SoundCloud import SoundCloudPlugin
 
 from .MusicPlugin import *
@@ -359,9 +359,9 @@ class Music(Module):
                 # self._process_search(conn_name, message, NetEasePlugin.name())
             self._process_search(self.bot.get_wrapper(conn_name, message), message, NetEasePlugin.name(),
                                  conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
-        if message.message.startswith("!ytq "):
-            self._process_search(self.bot.get_wrapper(conn_name, message), message, YouTubePlugin.name(),
-                                 conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
+        # if message.message.startswith("!ytq "):
+        #     self._process_search(self.bot.get_wrapper(conn_name, message), message, YouTubePlugin.name(),
+        #                          conn_name, not self.conf[Music.CONF_RESPOND_IN_ROOM])
 
         if message.message.startswith("!scq "):
             self._process_search(self.bot.get_wrapper(conn_name, message), message, SoundCloudPlugin.name(),
