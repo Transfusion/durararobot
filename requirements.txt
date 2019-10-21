@@ -14,7 +14,7 @@ riprova==0.2.3
 simplejson==3.12.0
 six==1.11.0
 soundcloud==0.5.0
-urllib3==1.22
+urllib3==1.24.2
 virtualenv==15.1.0
 websockets==3.4
 yarl==0.15.0
