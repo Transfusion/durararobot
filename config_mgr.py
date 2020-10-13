@@ -48,7 +48,7 @@ class config_mgr:
 
 
         cfg['networking'] = {}
-        cfg['networking']['use_https'] = False
+        cfg['networking']['use_https'] = True
         cfg['networking']['drrr_domain'] = 'drrr.com'
         cfg['networking']['http_failure_retries'] = 5
         cfg['networking']['cookies_dir'] = 'cookies'
