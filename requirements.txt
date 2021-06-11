@@ -16,5 +16,5 @@ six==1.11.0
 soundcloud==0.5.0
 urllib3==1.22
 virtualenv==15.1.0
-websockets==3.4
+websockets==9.1
 yarl==0.15.0
